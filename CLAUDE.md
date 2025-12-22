@@ -1,153 +1,254 @@
-# CLAUDE.md - Switzerland Jobs Search Tool
+# CLAUDE.md - JobSpy Dashboard
 
 ## Project Overview
 
-This is an automated job search tool using JobSpy to find positions in Switzerland matching Vincenzo Imperati's profile as a PhD researcher in distributed systems, blockchain, and social network analysis.
+This is an automated job search and analysis tool using JobSpy to aggregate positions from multiple job boards. It features parallel execution, relevance scoring, SQLite persistence, and an interactive Streamlit dashboard.
 
-**Owner**: Vincenzo Imperati (vincenzo@imperati.dev)
-**Profile**: PhD candidate at Sapienza University (Nov 2023 - Oct 2026), Visiting PhD at ETH Zurich (Sep 2025 - Oct 2026)
-**Research**: User behavior analysis in distributed systems & blockchains, published at USENIX Security
-**Grant**: OpenSats grant recipient for Nostr protocol development (Bigbrotr, nostr-tools)
+The tool is **highly customizable** through YAML configuration - no code changes needed to customize for different profiles, locations, or job types.
 
 ## Architecture
 
 ### Technology Stack
+
 - **Python 3.11**: Core language (JobSpy requires 3.10+)
-- **JobSpy**: Web scraping library for job sites (LinkedIn, Indeed, Glassdoor, Google Jobs)
+- **JobSpy v1.1.82**: Web scraping library for job sites (LinkedIn, Indeed, Glassdoor, Google Jobs, etc.)
 - **Pandas**: Data manipulation and analysis
-- **OpenPyXL**: Excel file generation
-- **Matplotlib/Seaborn**: Data visualization for analysis
+- **OpenPyXL**: Excel file generation with formatting
+- **Streamlit**: Interactive dashboard with caching
+- **PyYAML**: YAML configuration parsing
+- **Tenacity**: Retry logic with exponential backoff
+- **SQLite**: Job persistence and tracking across runs
 - **Docker**: Containerized environment for cross-platform compatibility
 
 ### Project Structure
 
 ```
-switzerland-jobs-search/
+jobspy-dashboard/
+├── config/
+│   ├── settings.yaml          # User configuration (gitignored)
+│   └── settings.example.yaml  # Example template with full documentation
 ├── scripts/
-│   ├── search_jobs.py      # Main job search engine with CV-specific queries
-│   └── analyze_jobs.py     # Post-search analysis and reporting tool
-├── results/                # Generated CSV/Excel files (gitignored)
-│   └── .gitkeep
-├── config/                 # Configuration files (if needed)
-├── cv.pdf                  # Vincenzo's CV (reference for customization)
-├── Dockerfile             # Python 3.11 container
-├── docker-compose.yml     # Single service orchestration
-├── requirements.txt       # Python dependencies
-├── .gitignore            # Excludes results/*.csv, results/*.xlsx
-├── LICENSE               # MIT License
-└── README.md             # User documentation
+│   ├── search_jobs.py         # Main job search with parallel execution
+│   ├── analyze_jobs.py        # Post-search analysis and reporting
+│   ├── dashboard.py           # Streamlit interactive dashboard
+│   ├── config.py              # Configuration loader with validation
+│   ├── logger.py              # Structured logging with rotation
+│   ├── database.py            # SQLite persistence for job tracking
+│   └── models.py              # Type-safe dataclasses
+├── results/                    # Generated CSV/Excel files (gitignored)
+├── data/                       # SQLite database (gitignored)
+├── logs/                       # Log files with rotation (gitignored)
+├── Dockerfile                  # Python 3.11 container
+├── docker-compose.yml          # Service orchestration with profiles
+├── requirements.txt            # Python dependencies
+├── .dockerignore               # Docker build optimization
+├── .gitignore                  # Git exclusions
+├── LICENSE                     # MIT License
+├── README.md                   # User documentation
+└── CLAUDE.md                   # Developer documentation (this file)
 ```
 
 ## Core Components
 
-### 1. search_jobs.py (Main Script)
+### 1. config/settings.yaml
 
-**Purpose**: Searches for jobs across multiple sites and locations, filters by relevance, and exports results.
+Central configuration file containing all customizable settings with extensive documentation:
+
+- **search**: results_wanted, hours_old, job_types, sites, locations, distance, is_remote, etc.
+- **queries**: Organized by category (software_engineering, data, etc.)
+- **scoring**: threshold, weights, keywords for relevance calculation
+- **parallel**: max_workers for concurrent execution
+- **retry**: max_attempts, base_delay, backoff_factor
+- **logging**: level, file path, rotation settings
+- **output**: results_dir, data_dir, database_file
+- **profile**: User information for display
+
+See `config/settings.example.yaml` for full parameter documentation.
+
+### 2. scripts/config.py
+
+Configuration loader with type-safe dataclasses:
+
+**Key Classes**:
+- `SearchConfig`: Search parameters (results_wanted, hours_old, etc.)
+- `ScoringConfig`: Relevance scoring weights and keywords
+- `ParallelConfig`: Concurrency settings (max_workers)
+- `RetryConfig`: Retry logic parameters
+- `LoggingConfig`: Logging configuration
+- `OutputConfig`: File paths
+- `ProfileConfig`: User profile information
+- `Config`: Main configuration class combining all above
+
+**Key Functions**:
+- `load_config()`: Load from YAML with fallback to defaults
+- `get_config()`: Get singleton configuration instance
+- `reload_config()`: Force reload from file
+
+**Properties**:
+- `config.results_path`: Absolute path to results directory
+- `config.data_path`: Absolute path to data directory
+- `config.database_path`: Absolute path to SQLite database
+- `config.log_path`: Absolute path to log file
+- `config.get_all_queries()`: Flattened list of all search queries
+
+### 3. scripts/logger.py
+
+Structured logging with console colors and file rotation:
+
+**Key Components**:
+- `ColoredFormatter`: ANSI colors for console output
+- `PlainFormatter`: Plain text for file output
+- `ProgressLogger`: Track progress with counts and percentages
+
+**Key Functions**:
+- `setup_logging(config)`: Initialize logging handlers
+- `get_logger(name)`: Get logger instance
+- `log_section(logger, title)`: Log section header
+- `log_subsection(logger, title)`: Log subsection header
+
+### 4. scripts/models.py
+
+Type-safe dataclasses for data structures:
+
+**Key Classes**:
+- `Job`: Single job listing with all fields
+  - `job_id` property: SHA256 hash of title+company+location
+  - `from_dict()`: Create from DataFrame row
+  - `to_dict()`: Convert to dictionary
+- `SearchResult`: Results from a single query
+- `SearchSummary`: Statistics for complete search run
+- `JobDBRecord`: Database record for persistence (with all columns)
+
+### 5. scripts/database.py
+
+SQLite database for job persistence with full job details:
+
+**Schema** (updated with all columns):
+```sql
+CREATE TABLE jobs (
+    job_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    company TEXT NOT NULL,
+    location TEXT NOT NULL,
+    job_url TEXT,
+    site TEXT,
+    job_type TEXT,
+    is_remote BOOLEAN,
+    job_level TEXT,
+    description TEXT,
+    date_posted DATE,
+    min_amount REAL,
+    max_amount REAL,
+    currency TEXT,
+    company_url TEXT,
+    first_seen DATE NOT NULL,
+    last_seen DATE NOT NULL,
+    relevance_score INTEGER DEFAULT 0,
+    applied BOOLEAN DEFAULT FALSE
+)
+```
+
+**Automatic Migration**: When opening an existing database, new columns are automatically added using `ALTER TABLE` statements.
+
+**Key Methods**:
+- `save_job(job, site, job_level, company_url)`: Insert or update job with full details
+- `save_jobs_from_dataframe(df)`: Save from DataFrame with all columns
+- `get_new_job_ids(job_ids)`: Identify which jobs are new
+- `filter_new_jobs(df)`: Filter DataFrame to only new jobs
+- `get_all_jobs()`: Get all jobs from database
+- `mark_as_applied(job_id)`: Mark job as applied
+- `get_statistics()`: Get database statistics
+- `export_to_dataframe()`: Export all jobs with full details
+
+**Update Logic**: On conflict (same job_id), updates:
+- `last_seen` to today
+- `relevance_score` only if new score is higher
+- All other fields use COALESCE (keep existing if new is NULL)
+
+### 6. scripts/search_jobs.py
+
+Main job search with parallel execution:
 
 **Key Functions**:
 
-- `search_switzerland_jobs()` (lines 12-139)
-  - Executes 40+ CV-specific search queries across 6 Swiss locations
-  - Searches: indeed, linkedin, glassdoor, google
-  - Parameters: 50 results per query, last 30 days (hours_old=720), fulltime positions
-  - Returns deduplicated DataFrame
+- `calculate_relevance_score(row, config)`: Calculate score based on keywords
+  - Uses weights and keywords from config
+  - Returns integer score
 
-- `filter_relevant_jobs()` (lines 142-250)
-  - Calculates relevance scores based on 8 keyword categories
-  - Returns jobs with score > 10
+- `search_single_query(query, location, config)`: Execute one search
+  - Retry logic with exponential backoff via tenacity
+  - Returns (query, location, df, error)
 
-- `calculate_relevance_score()` (lines 175-239)
-  - **Scoring weights** (customized for Vincenzo's profile):
-    - Blockchain & distributed systems: +20
-    - PhD/research positions: +18
-    - Data analysis & user behavior: +15
-    - Summer 2026 programs: +15
-    - Security & privacy (ZK, crypto): +12
-    - Academic institutions (ETH/EPFL): +12
-    - ETH Zurich specifically: +10
-    - Social network analysis: +10
-    - Technical stack (Python/TypeScript/React): +8
-    - Open source development: +8
-    - Teaching positions: +6
-    - Computer Science: +5
-    - Zurich/Lausanne location: +5
-    - Hackathon/competition: +5
+- `search_jobs(config)`: Main parallel search
+  - Uses ThreadPoolExecutor with configurable workers
+  - Incremental deduplication during collection
+  - Returns (combined_df, SearchSummary)
 
-- `save_results()` (lines 253-284)
-  - Saves to both CSV and Excel with timestamp
-  - Excel includes auto-adjusted column widths
-  - Output format: `{prefix}_{YYYYMMDD_HHMMSS}.{csv|xlsx}`
+- `filter_relevant_jobs(df, config)`: Filter by score threshold
+  - Calculates scores for all jobs
+  - Returns filtered, sorted DataFrame
 
-**Search Queries** (lines 19-76):
-- 40+ queries organized in 8 categories:
-  1. Core Research Areas: distributed systems, blockchain, network analysis, social networks, user behavior
-  2. Blockchain & Web3: engineer, web3, smart contracts, cryptocurrency, Nostr, decentralized systems
-  3. PhD & Research: PhD researcher, postdoc, research scientist, visiting researcher
-  4. Data Science: data scientist/analyst/engineer, behavioral analytics, network data analysis
-  5. Software Engineering: backend Python, full-stack TypeScript, blockchain engineer, open source
-  6. Security & Privacy: security researcher, privacy engineer, cryptography, zero-knowledge proofs
-  7. Academic & Teaching: teaching assistant, university lecturer, research associate
-  8. Technologies: Python, React, Node.js, PostgreSQL, Docker
-  9. Summer/Temporary: summer internship 2026, research internship, temporary researcher
+- `save_results(df, config, prefix)`: Save to CSV and Excel
+  - Excel formatting: colored headers, hyperlinks, freeze panes
+  - Conditional formatting for high scores
 
-**Locations Searched** (lines 79-86):
-- Zurich, Switzerland (primary focus)
-- Lausanne, Switzerland (EPFL)
-- Geneva, Switzerland
-- Bern, Switzerland
-- Basel, Switzerland
-- Switzerland (general)
+- `main()`: Entry point
+  - Loads config, sets up logging
+  - Runs search, saves results
+  - Updates database with full job details, prints summary
 
-### 2. analyze_jobs.py (Analysis Tool)
+### 7. scripts/analyze_jobs.py
 
-**Purpose**: Analyzes saved job search results and generates insights.
+Results analysis and reporting:
 
 **Key Functions**:
+- `load_latest_results(config)`: Load most recent CSV file
+- `analyze_companies(df)`: Top 15 companies by job count
+- `analyze_locations(df)`: Top 10 locations
+- `analyze_keywords(df)`: Top 20 keywords in titles
+- `analyze_salary(df)`: Salary statistics if available
+- `analyze_job_types(df)`: Job type distribution
+- `analyze_remote(df)`: Remote vs on-site
+- `generate_report(df, config)`: Comprehensive report
+- `analyze_database(config)`: Database statistics
+- `export_filtered_by_company(df, companies, config)`: Filter by company
 
-- `load_latest_results()` (lines 15-39)
-  - Loads most recent CSV file from results/ directory
-  - Prefers relevant_jobs_*.csv over all_jobs_*.csv
+### 8. scripts/dashboard.py
 
-- `analyze_companies()` (lines 42-53)
-  - Top 15 companies by job count
+Streamlit interactive dashboard:
 
-- `analyze_locations()` (lines 56-67)
-  - Top 10 locations by job count
+**Key Features**:
+- Data loading from CSV files AND SQLite database (same columns now!)
+- Robust path detection for both local and Docker execution
+- Comprehensive filtering (text search, job level, sites, companies, etc.)
+- Statistics view with metrics and charts
+- Sortable/configurable job table with clickable job links
+- Job details view with full description
+- Export to CSV/Excel
+- Cache refresh button
 
-- `analyze_keywords()` (lines 70-93)
-  - Extracts top 20 keywords from job titles
-  - Filters common stop words
+**Key Functions**:
+- `load_csv_files()`: Load all CSV files from results directory (cached)
+- `load_database()`: Load jobs from SQLite database (cached)
+- `apply_filters(df, filters)`: Apply all filters to dataframe
+- `render_sidebar_filters(df)`: Render filter UI
+- `render_statistics(df, filtered_df)`: Render statistics section
+- `render_job_table(df)`: Render job results table with clickable links
+- `render_job_details(df)`: Render detailed job view
+- `render_export_section(df)`: Render export options
 
-- `analyze_salary()` (lines 96-118)
-  - Salary statistics if available (min/max amounts, currencies)
-
-- `generate_report()` (lines 121-163)
-  - Comprehensive report including:
-    - Total jobs, average relevance score
-    - Company/location/keyword breakdowns
-    - Job types (fulltime/contract/internship)
-    - Remote vs on-site distribution
-
-- `export_filtered_by_company()` (lines 165-179)
-  - Filters jobs by specific companies (currently commented out)
-  - Usage example in main() lines 194-195
-
-### 3. Docker Configuration
-
-**Dockerfile**:
-- Base image: `python:3.11-slim`
-- Installs: python-jobspy, pandas, openpyxl, matplotlib, seaborn
-- Creates /app/results directory
-- Working directory: /app/scripts
-- Default command: `python search_jobs.py`
-
-**docker-compose.yml**:
-- Single service: `jobsearch`
-- Volume mounts:
-  - `./results:/app/results` (persists output)
-  - `./scripts:/app/scripts` (live script editing)
-  - `./config:/app/config` (configuration files)
-- Environment: `PYTHONUNBUFFERED=1` (immediate output)
+**Path Resolution** (for Docker compatibility):
+```python
+# Handles both local and Docker/Streamlit execution
+_script_dir = Path(__file__).resolve().parent
+if _script_dir.name == "scripts":
+    BASE_DIR = _script_dir.parent
+else:
+    # Fallback for Docker
+    ...
+if str(BASE_DIR).startswith("/app"):
+    BASE_DIR = Path("/app")
+```
 
 ## Common Commands
 
@@ -179,358 +280,355 @@ python search_jobs.py
 
 # Analyze results
 python analyze_jobs.py
+
+# Launch dashboard
+streamlit run dashboard.py
 ```
 
-### Analyze Results
+### Launch Dashboard
 
 ```bash
 # Using Docker
-docker-compose run jobsearch python analyze_jobs.py
+docker-compose --profile dashboard up dashboard
+# Open http://localhost:8501
 
 # Using local Python
 cd scripts
-python analyze_jobs.py
+streamlit run dashboard.py
 ```
 
-### View Results
+### Database Queries
 
 ```bash
-# List all result files
-ls -lth results/
+# Statistics
+sqlite3 data/jobs.db "SELECT COUNT(*), AVG(relevance_score) FROM jobs"
 
-# View latest CSV
-cat results/relevant_jobs_*.csv | tail -n 20
+# New jobs today
+sqlite3 data/jobs.db "SELECT title, company FROM jobs WHERE first_seen = date('now')"
 
-# Open Excel file (Mac)
-open results/relevant_jobs_*.xlsx
+# Top jobs not yet applied
+sqlite3 data/jobs.db "SELECT title, company, relevance_score FROM jobs WHERE applied = 0 ORDER BY relevance_score DESC LIMIT 10"
+
+# Mark job as applied
+sqlite3 data/jobs.db "UPDATE jobs SET applied = 1 WHERE job_id = 'abc123...'"
+
+# Jobs by site
+sqlite3 data/jobs.db "SELECT site, COUNT(*) FROM jobs GROUP BY site"
+
+# Remote jobs
+sqlite3 data/jobs.db "SELECT title, company FROM jobs WHERE is_remote = 1 ORDER BY relevance_score DESC"
+
+# Jobs with salary info
+sqlite3 data/jobs.db "SELECT title, company, min_amount, max_amount, currency FROM jobs WHERE min_amount IS NOT NULL"
 ```
 
-## Output Files
+### View Logs
 
-All files saved to `results/` directory with timestamp format `YYYYMMDD_HHMMSS`:
+```bash
+# Latest log
+tail -f logs/search.log
 
-- `all_jobs_{timestamp}.csv` - All jobs found (before filtering)
-- `all_jobs_{timestamp}.xlsx` - Excel version with formatting
-- `relevant_jobs_{timestamp}.csv` - Jobs with relevance score > 10
-- `relevant_jobs_{timestamp}.xlsx` - Excel version
-- `filtered_by_company.csv` - Optional company-filtered results (if using analyze_jobs.py filter)
+# Search for errors
+grep ERROR logs/search.log
+```
 
-## Customization Guide
+## Configuration Guide
 
 ### Modify Search Queries
 
-Edit `scripts/search_jobs.py` lines 19-76:
+Edit `config/settings.yaml`:
 
-```python
-search_queries = [
-    "your new query",
-    "another query",
-]
+```yaml
+queries:
+  my_custom_category:
+    - "my custom query"
+    - "another query"
 ```
 
-**Tip**: Current queries are highly specific to Vincenzo's CV. Keep blockchain, distributed systems, and research focus.
+No code changes required!
 
 ### Adjust Relevance Scoring
 
-Edit `calculate_relevance_score()` function (lines 175-239):
+Edit `config/settings.yaml`:
 
-```python
-# Example: Increase blockchain weight
-if any(keyword in text for keyword in blockchain_keywords):
-    score += 25  # Changed from 20
-
-# Example: Add new keyword category
-nostr_keywords = ['nostr', 'nip', 'relay', 'zap']
-if any(keyword in text for keyword in nostr_keywords):
-    score += 15
+```yaml
+scoring:
+  threshold: 15  # Increase for stricter filtering
+  weights:
+    primary_skills: 25  # Increase priority
+    teaching: 0         # Disable category
+  keywords:
+    primary_skills:
+      - "newkeyword"    # Add new keyword
 ```
 
 ### Change Search Parameters
 
-Edit `scrape_jobs()` call in search_jobs.py (lines 97-108):
+Edit `config/settings.yaml`:
 
-```python
-jobs = scrape_jobs(
-    site_name=["indeed", "linkedin", "glassdoor", "google"],
-    search_term=query,
-    location=location,
-    results_wanted=50,      # Increase for more results (may hit rate limits)
-    hours_old=720,          # 720 = 30 days, 168 = 7 days
-    job_type="fulltime",    # Options: fulltime, parttime, internship, contract
-    is_remote=None,         # True = remote only, False = on-site only, None = both
-)
+```yaml
+search:
+  results_wanted: 20    # Reduce if rate limited
+  hours_old: 168        # 7 days instead of 30
+  locations:
+    - "Zurich, Switzerland"
 ```
 
-### Filter by Specific Companies
+### Adjust Parallelism
 
-Edit `analyze_jobs.py` lines 194-195:
+Edit `config/settings.yaml`:
 
-```python
-# Uncomment and customize:
-target_companies = ['ETH Zurich', 'EPFL', 'Google Research', 'IBM Research']
-export_filtered_by_company(df, target_companies)
+```yaml
+parallel:
+  max_workers: 3  # Reduce if rate limited
+
+retry:
+  max_attempts: 5
+  base_delay: 5
 ```
 
-### Add New Locations
+## Output Files
 
-Edit `scripts/search_jobs.py` lines 79-86:
+All files saved with timestamp format `YYYYMMDD_HHMMSS`:
 
-```python
-locations = [
-    "Zurich, Switzerland",
-    "Lausanne, Switzerland",
-    # Add new locations:
-    "Lugano, Switzerland",
-    "St. Gallen, Switzerland",
-]
-```
+- `results/all_jobs_{timestamp}.csv` - All jobs found
+- `results/all_jobs_{timestamp}.xlsx` - Excel with formatting
+- `results/relevant_jobs_{timestamp}.csv` - Jobs with score > threshold
+- `results/relevant_jobs_{timestamp}.xlsx` - Excel with highlighting
+- `data/jobs.db` - SQLite database with full job history
+- `logs/search.log` - Structured log file with rotation
 
 ## Troubleshooting
 
-### Issue: JobSpy Installation Fails (Python version)
+### Rate Limiting
 
-**Error**: `ERROR: Could not find a version that satisfies the requirement python-jobspy`
+**Symptoms**: Empty results, connection errors after some queries
 
-**Cause**: JobSpy requires Python 3.10+
+**Solutions**:
+1. Reduce `parallel.max_workers` to 3 in settings.yaml
+2. Reduce `search.results_wanted` to 20
+3. Increase `retry.base_delay` to 5
+4. Run at different times of day
 
-**Solution**: Use Docker instead of local Python:
-```bash
-docker-compose up --build
-```
-
-### Issue: No Jobs Found
-
-**Possible causes**:
-1. **Rate limiting**: Job sites may be blocking requests
-   - Solution: Reduce `results_wanted` from 50 to 20
-   - Wait a few hours before re-running
-
-2. **Network issues**: Check internet connection
-
-3. **Query too specific**: Broaden search queries
-
-4. **Time range too narrow**: Increase `hours_old` parameter (e.g., 1440 for 60 days)
-
-### Issue: Docker Build Fails
+### Docker Build Fails
 
 ```bash
-# Clear Docker cache and rebuild
 docker-compose down
 docker system prune -f
 docker-compose up --build
 ```
 
-### Issue: Permission Denied on results/ Directory
+### Import Errors
+
+Ensure you're running from the scripts directory:
 
 ```bash
-# Fix permissions
-chmod 755 results/
+cd scripts
+python search_jobs.py
 ```
 
-### Issue: Excel File Won't Open
+### Database Locked
 
-**Error**: Corrupted Excel file
-
-**Solution**: Use CSV files instead, or check openpyxl version:
-```bash
-pip install --upgrade openpyxl
-```
-
-### Issue: Search Taking Too Long
-
-**Causes**:
-- 40+ queries × 6 locations = 240+ searches
-- Each search requests 50 results
-
-**Solutions**:
-1. Reduce number of queries (comment out less relevant ones)
-2. Reduce locations (focus on Zurich only)
-3. Reduce `results_wanted` to 20
-4. Run searches in batches
-
-```python
-# Example: Zurich-only search
-locations = [
-    "Zurich, Switzerland",
-    # "Lausanne, Switzerland",  # Commented out
-]
-```
-
-## Important Notes
-
-### Rate Limiting
-- JobSpy scrapes public job sites and may hit rate limits
-- Symptoms: Errors after several successful queries, empty results
-- Solutions:
-  - Run at different times of day
-  - Reduce `results_wanted` parameter
-  - Add delays between searches (modify code)
-
-### Python Version Requirements
-- **Minimum**: Python 3.10
-- **Recommended**: Python 3.11+ (as used in Docker)
-- **Check version**: `python3 --version`
-- **If version < 3.10**: Must use Docker
-
-### Results Freshness
-- Default: Last 30 days (`hours_old=720`)
-- Modify for different ranges:
-  - 7 days: `hours_old=168`
-  - 60 days: `hours_old=1440`
-  - 90 days: `hours_old=2160`
-
-### Duplicate Removal
-- Automatically removes duplicates based on: title + company + location
-- Keeps first occurrence encountered
-
-### Data Privacy
-- `cv.pdf` is committed to repository (be aware if making repo public)
-- Results files are gitignored for privacy
-
-## CV-Specific Customization Notes
-
-This tool is **highly customized** for Vincenzo Imperati's profile:
-
-**Research Focus**:
-- Distributed systems & blockchain (+20 relevance score)
-- Social network analysis (+10, specifically Telegram research)
-- User behavior analysis (+15)
-- Nostr protocol (OpenSats grant project)
-
-**Career Stage**:
-- Currently visiting ETH Zurich (Sep 2025 - Oct 2026)
-- Graduating Oct 2026 → Summer 2026 programs prioritized (+15)
-- PhD positions & postdoc roles (+18)
-
-**Technical Skills**:
-- Python, TypeScript, C++, React, Node.js (+8)
-- PostgreSQL, MongoDB, Docker
-- Blockchain development (Solidity)
-
-**Academic Credentials**:
-- USENIX Security publication (top-tier security conference)
-- Outstanding University Student 2025 award
-- Teaching experience (3 fellowships) → teaching positions (+6)
-- Hackathon team lead (10 prizes) → competition roles (+5)
-
-**If adapting for another user**: Modify:
-1. `search_queries` list (lines 19-76)
-2. `calculate_relevance_score()` weights (lines 175-239)
-3. Profile banner in `main()` (lines 290-303)
-4. README.md profile section
-
-## Workflow for Regular Job Search
-
-### Weekly Search Routine
+SQLite can only have one writer at a time. Wait for current operation or:
 
 ```bash
-# 1. Run search (Friday mornings recommended)
-cd /Users/vincenzo/Documents/GitHub/switzerland-jobs-search
-docker-compose up
-
-# 2. Analyze results
-docker-compose run jobsearch python analyze_jobs.py
-
-# 3. Review top matches
-open results/relevant_jobs_*.xlsx
-
-# 4. Optional: Archive old results
-mkdir -p results/archive
-mv results/*_2025*.csv results/archive/  # Example for archiving
+# Kill any running search
+docker-compose down
 ```
 
-### Automated Scheduling (Optional)
+### Dashboard Shows Different Data (CSV vs DB)
 
-**Using cron (Mac/Linux)**:
-```bash
-# Edit crontab
-crontab -e
-
-# Add weekly job search (every Friday at 9 AM)
-0 9 * * 5 cd /Users/vincenzo/Documents/GitHub/switzerland-jobs-search && docker-compose up
-```
-
-**Using launchd (Mac)**:
-Create `~/Library/LaunchAgents/com.vincenzo.jobsearch.plist`
-
-## Git Workflow
+After updating the database schema, run a new search to populate all columns:
 
 ```bash
-# Check status
-git status
-
-# Commit code changes (not results)
-git add scripts/ Dockerfile docker-compose.yml
-git commit -m "Update search queries for new research focus"
-
-# Push to GitHub
-git push origin main
-
-# Pull updates
-git pull origin main
+docker-compose up --build
 ```
 
-**Note**: `results/` directory is gitignored. Job search outputs stay local.
+Or delete the old database and start fresh:
 
-## Performance Tips
-
-### Optimize Search Time
-1. **Parallel execution**: JobSpy runs searches sequentially. Consider modifying code to parallelize.
-2. **Caching**: Store previously seen job IDs to avoid re-processing
-3. **Targeted searches**: Focus on high-value queries (blockchain, research positions)
-
-### Reduce False Positives
-1. **Negative keywords**: Modify relevance scoring to penalize irrelevant terms
-2. **Company whitelist**: Focus on academic institutions and blockchain companies
-3. **Increase score threshold**: Change `jobs_df['relevance_score'] > 10` to `> 15`
-
-### Improve Relevance Scoring
-```python
-# Example: Penalize non-research roles for PhD focus
-if 'sales' in text or 'marketing' in text:
-    score -= 10
-
-# Example: Boost ETH/EPFL even more
-if 'eth zurich' in text or 'eth zürich' in text:
-    score += 20  # Increased from 10
+```bash
+rm data/jobs.db
+docker-compose up --build
 ```
+
+### Python Version
+
+JobSpy requires Python 3.10+. Check your version:
+
+```bash
+python3 --version
+```
+
+If below 3.10, use Docker.
+
+## Development Notes
+
+### Adding a New Scoring Category
+
+1. Add keywords to `config/settings.yaml`:
+```yaml
+scoring:
+  keywords:
+    my_category:
+      - "keyword1"
+      - "keyword2"
+  weights:
+    my_category: 10
+```
+
+2. The scoring logic in `scripts/search_jobs.py` dynamically reads from config, so no code changes needed!
+
+### Adding a New Database Column
+
+1. Add to `CREATE_TABLE` in `scripts/database.py`
+2. Add migration statement to `MIGRATE_COLUMNS` list
+3. Update `INSERT_OR_UPDATE` query
+4. Update `SELECT_ALL` and `SELECT_NEW` queries
+5. Update `JobDBRecord` dataclass in `scripts/models.py`
+6. Update `_row_to_record()` method
+7. Update `export_to_dataframe()` method
+8. Update `save_job()` and `save_jobs_from_dataframe()` methods
+
+### Adding a New Configuration Section
+
+1. Add to `config/settings.yaml`
+2. Create dataclass in `scripts/config.py`
+3. Add parsing function `_parse_xxx_config()`
+4. Update `Config` class with new field
+5. Update `load_config()` to include new section
+
+### Type Hints
+
+All functions use type hints. Run type checker:
+
+```bash
+pip install mypy
+mypy scripts/
+```
+
+### Logging Best Practices
+
+- Use `get_logger("module_name")` for module-specific loggers
+- Use `log_section()` for major operations
+- Use `log_subsection()` for sub-operations
+- Log levels: DEBUG for details, INFO for progress, WARNING for issues, ERROR for failures
+
+## Performance
+
+### Parallel Execution
+
+- Default 5 workers provides good balance
+- Reduce to 3 if hitting rate limits
+- Each worker handles one query-location pair
+- Execution time: ~3 minutes (was ~15 minutes sequential)
+
+### Memory Usage
+
+- Incremental deduplication reduces peak memory
+- Large result sets (~10k jobs) may use ~500MB
+- SQLite database grows with job count
+
+### Database
+
+- Tracks all jobs seen across runs with full details
+- Identifies new jobs vs previously seen
+- Supports marking jobs as "applied"
+- Same columns as CSV for consistent dashboard experience
 
 ## External Dependencies
 
 ### JobSpy Library
 - **GitHub**: https://github.com/speedyapply/JobSpy
-- **Documentation**: https://github.com/speedyapply/JobSpy#readme
-- **Version**: >=1.1.80 (see requirements.txt)
-- **Capabilities**:
-  - Scrapes: LinkedIn, Indeed, Glassdoor, Google Jobs
-  - Supports: Filters by job type, remote status, date range
-  - Returns: Pandas DataFrame with standardized schema
+- **Version**: 1.1.82 (latest as of December 2025)
+- **Capabilities**: Scrapes LinkedIn, Indeed, Glassdoor, Google Jobs, Bayt, Naukri, BDJobs
 
 ### Pandas DataFrame Schema (JobSpy Output)
 ```python
 columns = [
-    'title',           # Job title
-    'company',         # Company name
-    'location',        # Job location
-    'description',     # Full job description (if available)
-    'job_url',         # Link to job posting
-    'date_posted',     # When job was posted
-    'job_type',        # fulltime, parttime, contract, internship
-    'is_remote',       # Boolean: remote work available
-    'min_amount',      # Minimum salary (if available)
-    'max_amount',      # Maximum salary (if available)
-    'currency',        # Salary currency (CHF, EUR, USD)
-    'interval',        # Salary interval (yearly, monthly)
+    'id', 'site', 'job_url', 'job_url_direct', 'title', 'company',
+    'location', 'date_posted', 'job_type', 'salary_source', 'interval',
+    'min_amount', 'max_amount', 'currency', 'is_remote', 'job_level',
+    'job_function', 'listing_type', 'emails', 'description',
+    'company_industry', 'company_url', 'company_logo', 'company_url_direct',
+    'company_addresses', 'company_num_employees', 'company_revenue',
+    'company_description', 'skills', 'experience_range', 'company_rating',
+    'company_reviews_count', 'vacancy_count', 'work_from_home_type',
 ]
 ```
 
-## Contact & Support
+## JobSpy Optimization Guide
 
-**Repository Owner**: Vincenzo Imperati
-**Email**: vincenzo@imperati.dev
-**GitHub**: https://github.com/VincenzoImp/switzerland-jobs-search (private)
+Based on analysis of JobSpy v1.1.82 source code:
 
-**For JobSpy issues**: https://github.com/speedyapply/JobSpy/issues
+### Key Findings
+
+1. **JobSpy Already Uses Parallelism Internally**
+   - In `__init__.py:120`, JobSpy uses ThreadPoolExecutor to scrape all sites concurrently
+   - Our parallel query execution complements this (we parallelize queries, JobSpy parallelizes sites)
+
+2. **Indeed Filter Limitation** (Critical!)
+   - Indeed can only use ONE of:
+     - `hours_old` (date filtering)
+     - `job_type + is_remote` (combined filter)
+     - `easy_apply`
+   - **We prioritize `hours_old` over `job_type`** for fresher results
+
+3. **LinkedIn Rate Limiting**
+   - Built-in delays: 3-7 seconds between requests
+   - Hard limit at 1000 results
+   - Heavy rate limiting around 10th page
+   - `linkedin_fetch_description=True` doubles request count
+
+4. **Glassdoor Issues**
+   - "Location not parsed" errors occur when location doesn't match database
+   - 400 errors can be rate limiting or invalid queries
+
+### Optimized Parameters
+
+| Parameter | Setting | Reason |
+|-----------|---------|--------|
+| `distance` | 50 | 50 miles (~80km) covers metropolitan areas |
+| `enforce_annual_salary` | true | Normalizes all salaries for comparison |
+| `description_format` | "markdown" | Best for text analysis |
+| `verbose` | 1 | Reduces noise (we have our own logging) |
+
+### Site-Specific Behavior
+
+**Indeed** (best coverage):
+- No significant rate limiting
+- 100 jobs per page internally
+- Supports all filter parameters (with limitations above)
+
+**LinkedIn**:
+- Uses guest API (no login required)
+- 25 jobs per page
+- Aggressive rate limiting
+- `linkedin_fetch_description=True` fetches full descriptions (slower but more data)
+
+**Glassdoor**:
+- GraphQL API
+- 30 jobs per page
+- May have location parsing issues
+
+**Google Jobs**:
+- Requires specific `google_search_term` syntax
+- Normal `search_term` doesn't work well
+- Syntax: copy from Google Jobs search bar
+
+### Verbosity Levels
+
+```python
+verbose=0  # Errors only
+verbose=1  # Errors + warnings (recommended)
+verbose=2  # All logs (default, very noisy)
+```
+
+### Known Limitations
+
+1. **Cannot filter by job_type AND hours_old on Indeed** - we prioritize freshness
+2. **LinkedIn rate limits quickly** - use proxies for heavy scraping
+3. **Glassdoor location parsing** - some queries return "location not parsed"
+4. **Google Jobs needs specific syntax** - disabled by default
 
 ## License
 
@@ -538,5 +636,4 @@ MIT License - See LICENSE file for details.
 
 ---
 
-**Last Updated**: 2025-10-07
-**Claude Instance**: Use this document to understand the project structure and assist with modifications.
+**Last Updated**: 2025-12-22
