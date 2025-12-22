@@ -1,294 +1,522 @@
+#!/usr/bin/env python3
 """
-Generalized Job Search Tool
-Searches for jobs across multiple sites and locations based on configuration file.
+Switzerland Jobs Search - PhD & Software Engineering Positions.
+
+Searches for blockchain, distributed systems, and data analysis roles in Switzerland.
+Features parallel execution, retry logic, SQLite persistence, and configurable scoring.
 """
 
-import sys
-from pathlib import Path
+from __future__ import annotations
+
+import hashlib
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from typing import Any
+
 import pandas as pd
 from jobspy import scrape_jobs
-import yaml
-import logging
-from typing import Dict, List, Any, Optional
-import time
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
 )
-logger = logging.getLogger(__name__)
+
+from config import Config, get_config
+from database import get_database
+from logger import ProgressLogger, get_logger, log_section, setup_logging
+from models import Job, SearchSummary
 
 
-class JobSearcher:
-    """Main job search class that uses configuration file."""
+# Thread-safe lock for shared data structures
+_jobs_lock = threading.Lock()
 
-    def __init__(self, config_path: str = "../config/config.yaml"):
-        """Initialize with configuration file."""
-        self.config = self._load_config(config_path)
-        self._setup_logging()
-        self.all_jobs = []
 
-    def _load_config(self, config_path: str) -> Dict:
-        """Load configuration from YAML file."""
-        config_file = Path(config_path)
+def calculate_relevance_score(row: pd.Series, config: Config) -> int:
+    """
+    Calculate relevance score based on user profile and configuration.
 
-        if not config_file.exists():
-            logger.error(f"Configuration file not found: {config_path}")
-            logger.info("Please copy config.example.yaml to config.yaml and customize it.")
-            sys.exit(1)
+    Args:
+        row: DataFrame row with job data.
+        config: Configuration with scoring weights and keywords.
 
-        with open(config_file, 'r') as f:
-            config = yaml.safe_load(f)
+    Returns:
+        Relevance score as integer.
+    """
+    score = 0
+    text = " ".join(
+        [
+            str(row.get("title", "") or ""),
+            str(row.get("description", "") or ""),
+            str(row.get("company", "") or ""),
+        ]
+    ).lower()
 
-        logger.info(f"Loaded configuration from {config_path}")
-        return config
+    weights = config.scoring.weights
+    keywords = config.scoring.keywords
 
-    def _setup_logging(self):
-        """Setup logging based on config."""
-        log_level = self.config.get('advanced', {}).get('log_level', 'INFO')
-        logging.getLogger().setLevel(getattr(logging, log_level))
+    # Blockchain & Distributed Systems
+    if any(kw in text for kw in keywords.get("blockchain", [])):
+        score += weights.get("blockchain", 20)
 
-    def _flatten_queries(self) -> List[str]:
-        """Flatten query categories into a single list."""
-        queries = []
-        query_config = self.config['search']['queries']
+    # PhD/Research positions
+    if any(kw in text for kw in keywords.get("phd", [])):
+        score += weights.get("phd_research", 18)
 
-        for category, query_list in query_config.items():
-            if isinstance(query_list, list):
-                queries.extend(query_list)
+    # Data analysis & user behavior
+    if any(kw in text for kw in keywords.get("data", [])):
+        score += weights.get("data_analysis", 15)
 
-        return queries
+    # Security & Privacy
+    if any(kw in text for kw in keywords.get("security", [])):
+        score += weights.get("security", 12)
 
-    def search_jobs(self) -> pd.DataFrame:
-        """Execute job search based on configuration."""
-        self._print_banner()
+    # Social network analysis
+    if any(kw in text for kw in keywords.get("social", [])):
+        score += weights.get("social_network", 10)
 
-        search_config = self.config['search']
-        filters = search_config['filters']
+    # Technical skills
+    if any(kw in text for kw in keywords.get("tech", [])):
+        score += weights.get("tech_skills", 8)
 
-        # Get all queries and locations
-        queries = self._flatten_queries()
-        locations = search_config['locations']
-        sites = search_config['sites']
+    # Summer programs
+    if any(kw in text for kw in keywords.get("summer", [])):
+        score += weights.get("summer_programs", 15)
 
-        logger.info(f"Searching {len(queries)} queries across {len(locations)} locations")
-        print(f"\n🔍 Searching for jobs...")
-        print("=" * 80)
+    # Academic institutions
+    if any(kw in text for kw in keywords.get("academic", [])):
+        score += weights.get("academic", 12)
 
-        rate_limit = self.config.get('advanced', {}).get('rate_limit_delay', 1)
+    # Open source
+    if "open source" in text or "opensource" in text:
+        score += weights.get("open_source", 8)
 
-        # Search each location
-        for location in locations:
-            print(f"\n📍 Searching in: {location}")
+    # Hackathon/competition
+    if "hackathon" in text or "competition" in text:
+        score += weights.get("hackathon", 5)
 
-            for query in queries:
-                try:
-                    print(f"   - Query: {query}")
+    # Teaching
+    if "teaching" in text or "lecturer" in text:
+        score += weights.get("teaching", 6)
 
-                    # Prepare scrape_jobs parameters
-                    scrape_params = {
-                        'site_name': sites,
-                        'search_term': query,
-                        'location': location,
-                        'results_wanted': filters.get('results_per_query', 50),
-                        'hours_old': filters.get('days_back', 30) * 24,
-                        'country_indeed': filters.get('country_indeed', 'Switzerland'),
-                        'linkedin_fetch_description': filters.get('linkedin_fetch_description', True),
-                    }
+    # Computer Science
+    if "computer science" in text:
+        score += weights.get("computer_science", 5)
 
-                    # Add job types if specified
-                    job_types = filters.get('job_types', [])
-                    if len(job_types) == 1:
-                        scrape_params['job_type'] = job_types[0]
+    # Location bonuses
+    if "zurich" in text or "zürich" in text:
+        score += weights.get("location_bonus", 5)
+    elif "lausanne" in text or "epfl" in text:
+        score += weights.get("location_bonus", 5)
 
-                    jobs = scrape_jobs(**scrape_params)
+    # ETH Zurich specific bonus
+    if "eth zurich" in text or "eth zürich" in text:
+        score += weights.get("eth_zurich", 10)
 
-                    if jobs is not None and len(jobs) > 0:
-                        jobs['search_query'] = query
-                        jobs['search_location'] = location
-                        self.all_jobs.append(jobs)
-                        print(f"      ✅ Found {len(jobs)} jobs")
-                    else:
-                        print(f"      ⚠️  No jobs found")
+    return score
 
-                    # Rate limiting
-                    time.sleep(rate_limit)
 
-                except Exception as e:
-                    logger.error(f"Error searching '{query}' in {location}: {e}")
-                    print(f"      ❌ Error: {e}")
+def search_single_query(
+    query: str,
+    location: str,
+    config: Config,
+) -> tuple[str, str, pd.DataFrame | None, str | None]:
+    """
+    Execute a single search query with retry logic.
 
-                    # Retry logic
-                    if self.config.get('advanced', {}).get('retry_failed_queries', False):
-                        max_retries = self.config.get('advanced', {}).get('max_retries', 2)
-                        for retry in range(max_retries):
-                            try:
-                                logger.info(f"Retrying {query} (attempt {retry + 1}/{max_retries})")
-                                time.sleep(rate_limit * 2)
-                                jobs = scrape_jobs(**scrape_params)
-                                if jobs is not None and len(jobs) > 0:
-                                    jobs['search_query'] = query
-                                    jobs['search_location'] = location
-                                    self.all_jobs.append(jobs)
-                                    print(f"      ✅ Retry successful: Found {len(jobs)} jobs")
-                                    break
-                            except Exception as retry_error:
-                                logger.error(f"Retry {retry + 1} failed: {retry_error}")
+    Args:
+        query: Search term.
+        location: Location to search.
+        config: Configuration object.
 
-        # Combine all results
-        if not self.all_jobs:
-            logger.warning("No jobs found in any search!")
-            return pd.DataFrame()
+    Returns:
+        Tuple of (query, location, results_df, error_message).
+    """
+    logger = get_logger("search")
 
-        jobs_df = pd.concat(self.all_jobs, ignore_index=True)
-
-        # Remove duplicates
-        dedup_fields = self.config.get('advanced', {}).get('deduplication_fields',
-                                                            ['title', 'company', 'location'])
-        jobs_df = jobs_df.drop_duplicates(subset=dedup_fields, keep='first')
-
-        print(f"\n📊 Total jobs found: {len(jobs_df)}")
-        return jobs_df
-
-    def calculate_relevance_score(self, job_text: str) -> int:
-        """Calculate relevance score based on configuration."""
-        text = job_text.lower()
-        score = 0
-
-        scoring_config = self.config.get('relevance_scoring', {})
-        categories = scoring_config.get('categories', {})
-
-        for category_name, category_data in categories.items():
-            weight = category_data.get('weight', 0)
-            keywords = category_data.get('keywords', [])
-
-            # Check if any keyword from this category appears in text
-            if any(keyword.lower() in text for keyword in keywords):
-                score += weight
-
-        return score
-
-    def filter_relevant_jobs(self, jobs_df: pd.DataFrame) -> pd.DataFrame:
-        """Filter jobs based on relevance score."""
-        if jobs_df.empty:
-            return jobs_df
-
-        print("\n🎯 Calculating relevance scores...")
-
-        # Calculate relevance for each job
-        jobs_df['relevance_score'] = jobs_df.apply(
-            lambda row: self.calculate_relevance_score(
-                f"{row.get('title', '')} {row.get('description', '')} "
-                f"{row.get('company', '')} {row.get('location', '')}"
-            ),
-            axis=1
+    @retry(
+        retry=retry_if_exception_type((ConnectionError, TimeoutError)),
+        stop=stop_after_attempt(config.retry.max_attempts),
+        wait=wait_exponential(
+            multiplier=config.retry.base_delay,
+            exp_base=config.retry.backoff_factor,
+        ),
+        reraise=True,
+    )
+    def _do_search() -> pd.DataFrame:
+        # NOTE: For Indeed, using hours_old disables job_type filtering (JobSpy limitation)
+        # We prioritize date filtering over job type for broader results
+        return scrape_jobs(
+            # Core parameters
+            site_name=config.search.sites,
+            search_term=query,
+            location=location,
+            results_wanted=config.search.results_wanted,
+            hours_old=config.search.hours_old,
+            country_indeed="Switzerland",
+            # JobSpy core parameters
+            distance=config.search.distance,
+            is_remote=config.search.is_remote,
+            easy_apply=config.search.easy_apply,
+            offset=config.search.offset,
+            # Output format parameters
+            enforce_annual_salary=config.search.enforce_annual_salary,
+            description_format=config.search.description_format,
+            verbose=config.search.verbose,
+            # LinkedIn-specific parameters
+            linkedin_fetch_description=config.search.linkedin_fetch_description,
+            linkedin_company_ids=config.search.linkedin_company_ids,
+            # Google Jobs-specific parameters
+            google_search_term=config.search.google_search_term,
+            # Network/Proxy parameters
+            proxies=config.search.proxies,
+            ca_cert=config.search.ca_cert,
+            user_agent=config.search.user_agent,
         )
 
-        # Filter by minimum score
-        min_score = self.config.get('relevance_scoring', {}).get('min_score', 10)
-        relevant_jobs = jobs_df[jobs_df['relevance_score'] >= min_score].copy()
-        relevant_jobs = relevant_jobs.sort_values('relevance_score', ascending=False)
+    try:
+        jobs = _do_search()
 
-        print(f"   ✅ {len(relevant_jobs)} relevant jobs (score >= {min_score})")
-        print(f"   📈 Average relevance score: {relevant_jobs['relevance_score'].mean():.1f}")
-
-        return relevant_jobs
-
-    def save_results(self, jobs_df: pd.DataFrame, prefix: str = "jobs"):
-        """Save results based on configuration."""
-        if jobs_df.empty:
-            logger.warning("No jobs to save!")
-            return
-
-        output_config = self.config.get('output', {})
-        results_dir = Path(output_config.get('results_dir', '../results'))
-        results_dir.mkdir(parents=True, exist_ok=True)
-
-        # Generate filename
-        prefix = output_config.get('prefix', prefix)
-        if output_config.get('include_timestamp', True):
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f"{prefix}_{timestamp}"
+        if jobs is not None and len(jobs) > 0:
+            jobs["search_query"] = query
+            jobs["search_location"] = location
+            jobs["search_date"] = datetime.now().strftime("%Y-%m-%d")
+            return query, location, jobs, None
         else:
-            filename = prefix
+            return query, location, None, None
 
-        formats = output_config.get('formats', ['csv', 'xlsx'])
-
-        # Save in requested formats
-        for fmt in formats:
-            filepath = results_dir / f"{filename}.{fmt}"
-
-            if fmt == 'csv':
-                jobs_df.to_csv(filepath, index=False)
-                print(f"   💾 Saved to {filepath}")
-            elif fmt == 'xlsx':
-                with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
-                    jobs_df.to_excel(writer, index=False, sheet_name='Jobs')
-
-                    # Auto-adjust column widths if configured
-                    if output_config.get('excel', {}).get('auto_adjust_columns', True):
-                        worksheet = writer.sheets['Jobs']
-                        for idx, col in enumerate(jobs_df.columns):
-                            max_length = max(
-                                jobs_df[col].astype(str).apply(len).max(),
-                                len(col)
-                            )
-                            worksheet.column_dimensions[chr(65 + idx)].width = min(max_length + 2, 50)
-
-                print(f"   💾 Saved to {filepath}")
-
-    def _print_banner(self):
-        """Print search banner with profile info."""
-        profile = self.config.get('profile', {})
-        name = profile.get('name', 'User')
-        career_stage = profile.get('career_stage', 'Job Seeker')
-
-        print("\n    ╔════════════════════════════════════════════════════════════════════╗")
-        print(f"    ║          Job Search Tool - {name:<39}║")
-        print( "    ║                                                                    ║")
-        print(f"    ║  Career Stage: {career_stage:<50}║")
-
-        if 'summary' in profile and profile['summary']:
-            summary_lines = profile['summary'].strip().split('\n')
-            for line in summary_lines[:3]:  # Show first 3 lines
-                print(f"    ║  {line:<65}║")
-
-        print( "    ╚════════════════════════════════════════════════════════════════════╝")
-
-    def run(self):
-        """Main execution method."""
-        # Search for jobs
-        all_jobs = self.search_jobs()
-
-        if all_jobs.empty:
-            logger.error("No jobs found. Exiting.")
-            return
-
-        # Save all jobs if configured
-        if self.config.get('advanced', {}).get('save_all_jobs', True):
-            print("\n💾 Saving all jobs...")
-            self.save_results(all_jobs, prefix="all_jobs")
-
-        # Filter and save relevant jobs
-        if self.config.get('advanced', {}).get('save_relevant_jobs', True):
-            relevant_jobs = self.filter_relevant_jobs(all_jobs)
-            if not relevant_jobs.empty:
-                print("\n💾 Saving relevant jobs...")
-                self.save_results(relevant_jobs, prefix="relevant_jobs")
-
-        print("\n✅ Job search completed!")
-        print(f"   📁 Results saved to: {self.config.get('output', {}).get('results_dir', '../results')}")
+    except Exception as e:
+        error_msg = str(e)
+        logger.warning(f"Query failed: {query} @ {location}: {error_msg}")
+        return query, location, None, error_msg
 
 
-def main():
-    """Main entry point."""
-    # Allow custom config path via command line
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "../config/config.yaml"
+def search_switzerland_jobs(config: Config) -> tuple[pd.DataFrame | None, SearchSummary]:
+    """
+    Search for relevant jobs in Switzerland using parallel execution.
 
-    searcher = JobSearcher(config_path)
-    searcher.run()
+    Args:
+        config: Configuration object.
+
+    Returns:
+        Tuple of (combined_jobs_df, search_summary).
+    """
+    logger = get_logger("search")
+    summary = SearchSummary()
+
+    log_section(logger, "SEARCHING FOR JOBS IN SWITZERLAND")
+
+    queries = config.get_all_queries()
+    locations = config.search.locations
+
+    # Build list of all search tasks
+    tasks = [(q, loc) for loc in locations for q in queries]
+    summary.total_queries = len(tasks)
+
+    logger.info(f"Total search tasks: {len(tasks)}")
+    logger.info(f"Queries: {len(queries)}, Locations: {len(locations)}")
+    logger.info(f"Parallel workers: {config.parallel.max_workers}")
+
+    all_jobs: list[pd.DataFrame] = []
+    seen_jobs: set[str] = set()  # For deduplication
+
+    progress = ProgressLogger(logger, len(tasks), "Job search")
+
+    # Execute searches in parallel
+    with ThreadPoolExecutor(max_workers=config.parallel.max_workers) as executor:
+        futures = {
+            executor.submit(search_single_query, q, loc, config): (q, loc)
+            for q, loc in tasks
+        }
+
+        for future in as_completed(futures):
+            query, location = futures[future]
+
+            try:
+                q, loc, jobs_df, error = future.result()
+
+                if error:
+                    summary.failed_queries += 1
+                    progress.update(
+                        success=False, message=f"FAILED: {query} @ {location}"
+                    )
+                elif jobs_df is not None and len(jobs_df) > 0:
+                    summary.successful_queries += 1
+                    summary.total_jobs_found += len(jobs_df)
+
+                    # Deduplicate incrementally
+                    new_jobs = []
+                    for _, row in jobs_df.iterrows():
+                        job_key = _generate_job_key(row)
+                        with _jobs_lock:
+                            if job_key not in seen_jobs:
+                                seen_jobs.add(job_key)
+                                new_jobs.append(row)
+
+                    if new_jobs:
+                        new_df = pd.DataFrame(new_jobs)
+                        with _jobs_lock:
+                            all_jobs.append(new_df)
+
+                    progress.update(
+                        success=True,
+                        message=f"Found {len(jobs_df)} jobs: {query} @ {location}",
+                    )
+                else:
+                    summary.successful_queries += 1
+                    progress.update(
+                        success=True, message=f"No results: {query} @ {location}"
+                    )
+
+            except Exception as e:
+                summary.failed_queries += 1
+                logger.error(f"Unexpected error for {query} @ {location}: {e}")
+                progress.update(success=False, message=f"ERROR: {query}")
+
+    progress.summary()
+
+    if not all_jobs:
+        logger.warning("No jobs found in any search.")
+        summary.finish()
+        return None, summary
+
+    # Combine all results
+    combined_jobs = pd.concat(all_jobs, ignore_index=True)
+    summary.unique_jobs = len(combined_jobs)
+
+    logger.info(f"Total unique jobs after deduplication: {len(combined_jobs)}")
+
+    summary.finish()
+    return combined_jobs, summary
+
+
+def _generate_job_key(row: pd.Series) -> str:
+    """Generate unique key for job deduplication."""
+    identifier = f"{row.get('title', '')}|{row.get('company', '')}|{row.get('location', '')}".lower()
+    return hashlib.sha256(identifier.encode()).hexdigest()[:16]
+
+
+def filter_relevant_jobs(jobs_df: pd.DataFrame, config: Config) -> pd.DataFrame:
+    """
+    Filter jobs based on relevance score.
+
+    Args:
+        jobs_df: DataFrame with all jobs.
+        config: Configuration with scoring settings.
+
+    Returns:
+        Filtered DataFrame with relevant jobs.
+    """
+    logger = get_logger("filter")
+
+    log_section(logger, "FILTERING RELEVANT JOBS")
+
+    # Calculate relevance scores
+    jobs_df = jobs_df.copy()
+    jobs_df["relevance_score"] = jobs_df.apply(
+        lambda row: calculate_relevance_score(row, config), axis=1
+    )
+
+    # Filter by threshold
+    threshold = config.scoring.threshold
+    relevant_jobs = jobs_df[jobs_df["relevance_score"] > threshold].copy()
+    relevant_jobs = relevant_jobs.sort_values("relevance_score", ascending=False)
+
+    logger.info(f"Score threshold: {threshold}")
+    logger.info(f"Relevant jobs found: {len(relevant_jobs)}")
+
+    if len(relevant_jobs) > 0:
+        logger.info(f"Highest score: {relevant_jobs['relevance_score'].max()}")
+        logger.info(f"Average score: {relevant_jobs['relevance_score'].mean():.1f}")
+
+    return relevant_jobs
+
+
+def save_results(
+    jobs_df: pd.DataFrame,
+    config: Config,
+    filename_prefix: str = "jobs",
+) -> tuple[str, str]:
+    """
+    Save results to CSV and Excel with formatting.
+
+    Args:
+        jobs_df: DataFrame to save.
+        config: Configuration object.
+        filename_prefix: Prefix for output files.
+
+    Returns:
+        Tuple of (csv_path, excel_path).
+    """
+    logger = get_logger("output")
+
+    results_dir = config.results_path
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Save to CSV
+    csv_path = results_dir / f"{filename_prefix}_{timestamp}.csv"
+    jobs_df.to_csv(csv_path, index=False)
+    logger.info(f"Saved CSV: {csv_path}")
+
+    # Save to Excel with formatting
+    excel_path = results_dir / f"{filename_prefix}_{timestamp}.xlsx"
+
+    try:
+        with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
+            jobs_df.to_excel(writer, index=False, sheet_name="Jobs")
+            worksheet = writer.sheets["Jobs"]
+
+            # Format header row
+            header_fill = PatternFill(
+                start_color="4472C4", end_color="4472C4", fill_type="solid"
+            )
+            header_font = Font(bold=True, color="FFFFFF")
+
+            for col_num, column_title in enumerate(jobs_df.columns, 1):
+                cell = worksheet.cell(row=1, column=col_num)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center")
+
+            # Auto-adjust column widths
+            for col_num, column in enumerate(jobs_df.columns, 1):
+                max_length = max(
+                    jobs_df[column].astype(str).map(len).max(),
+                    len(str(column)),
+                )
+                adjusted_width = min(max_length + 2, 50)
+                worksheet.column_dimensions[get_column_letter(col_num)].width = (
+                    adjusted_width
+                )
+
+            # Make URLs clickable
+            if "job_url" in jobs_df.columns:
+                url_col = jobs_df.columns.get_loc("job_url") + 1
+                for row_num in range(2, len(jobs_df) + 2):
+                    cell = worksheet.cell(row=row_num, column=url_col)
+                    if cell.value and str(cell.value).startswith("http"):
+                        cell.hyperlink = cell.value
+                        cell.font = Font(color="0563C1", underline="single")
+
+            # Freeze header row
+            worksheet.freeze_panes = "A2"
+
+            # Conditional formatting for relevance score
+            if "relevance_score" in jobs_df.columns:
+                score_col = jobs_df.columns.get_loc("relevance_score") + 1
+                high_score_fill = PatternFill(
+                    start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"
+                )
+                for row_num in range(2, len(jobs_df) + 2):
+                    cell = worksheet.cell(row=row_num, column=score_col)
+                    if cell.value and int(cell.value) >= 30:
+                        cell.fill = high_score_fill
+
+        logger.info(f"Saved Excel: {excel_path}")
+
+    except Exception as e:
+        logger.warning(f"Could not save Excel file: {e}")
+        excel_path = None
+
+    return str(csv_path), str(excel_path) if excel_path else ""
+
+
+def print_banner(config: Config) -> None:
+    """Print application banner with profile info."""
+    profile = config.profile
+    banner = f"""
+    ╔══════════════════════════════════════════════════════════════════════╗
+    ║          Switzerland Jobs Search - {profile.name:<29} ║
+    ║                                                                      ║
+    ║  Profile:                                                            ║
+    ║  • {profile.current_position:<65} ║
+    ║  • {profile.visiting_position:<65} ║
+    ║  • Research: {profile.research_focus:<54} ║
+    ║  • Published: {profile.publication:<53} ║
+    ║  • {profile.grant:<65} ║
+    ║  • Skills: {profile.skills:<56} ║
+    ║  • Target: {profile.target:<56} ║
+    ╚══════════════════════════════════════════════════════════════════════╝
+    """
+    print(banner)
+
+
+def print_top_jobs(jobs_df: pd.DataFrame, count: int = 10) -> None:
+    """Print top N jobs by relevance score."""
+    logger = get_logger("results")
+
+    log_section(logger, f"TOP {count} MOST RELEVANT JOBS")
+
+    for idx, (_, row) in enumerate(jobs_df.head(count).iterrows(), 1):
+        logger.info(f"\n{idx}. {row['title']}")
+        logger.info(f"   Company: {row['company']}")
+        logger.info(f"   Location: {row['location']}")
+        logger.info(f"   Relevance Score: {row['relevance_score']}")
+        if pd.notna(row.get("job_url")):
+            logger.info(f"   URL: {row['job_url']}")
+
+
+def main() -> None:
+    """Main execution function."""
+    # Load configuration
+    config = get_config()
+
+    # Setup logging
+    logger = setup_logging(config)
+
+    # Print banner
+    print_banner(config)
+
+    # Initialize database
+    db = get_database(config)
+    db_stats = db.get_statistics()
+    logger.info(f"Database: {db_stats['total_jobs']} jobs tracked")
+
+    # Search for jobs
+    all_jobs, summary = search_switzerland_jobs(config)
+
+    if all_jobs is None or len(all_jobs) == 0:
+        logger.error("No jobs found. Exiting.")
+        return
+
+    # Save all results
+    log_section(logger, "SAVING ALL RESULTS")
+    save_results(all_jobs, config, "all_jobs")
+
+    # Filter relevant jobs
+    relevant_jobs = filter_relevant_jobs(all_jobs, config)
+    summary.relevant_jobs = len(relevant_jobs)
+
+    if len(relevant_jobs) == 0:
+        logger.warning("No highly relevant jobs found after filtering.")
+        logger.info("Tip: Check the 'all_jobs' file for broader results.")
+        return
+
+    # Save filtered results
+    log_section(logger, "SAVING FILTERED RESULTS")
+    save_results(relevant_jobs, config, "relevant_jobs")
+
+    # Save to database and identify new jobs
+    new_count, updated_count = db.save_jobs_from_dataframe(relevant_jobs)
+    summary.new_jobs = new_count
+
+    logger.info(f"Database updated: {new_count} new, {updated_count} existing")
+
+    # Print top matches
+    print_top_jobs(relevant_jobs)
+
+    # Print summary
+    log_section(logger, "SEARCH COMPLETE")
+    logger.info(f"Duration: {summary.duration_formatted}")
+    logger.info(f"Total unique jobs: {summary.unique_jobs}")
+    logger.info(f"Highly relevant jobs: {summary.relevant_jobs}")
+    logger.info(f"New jobs (first time seen): {summary.new_jobs}")
+    logger.info(f"Check the 'results' folder for detailed CSV and Excel files.")
 
 
 if __name__ == "__main__":
