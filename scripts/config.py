@@ -202,6 +202,8 @@ class OutputConfig:
     results_dir: str = "results"
     data_dir: str = "data"
     database_file: str = "jobs.db"
+    save_csv: bool = True  # Save CSV files
+    save_excel: bool = True  # Save Excel files
 
 
 @dataclass
@@ -386,6 +388,8 @@ def _parse_output_config(data: dict[str, Any]) -> OutputConfig:
         results_dir=output_data.get("results_dir", "results"),
         data_dir=output_data.get("data_dir", "data"),
         database_file=output_data.get("database_file", "jobs.db"),
+        save_csv=output_data.get("save_csv", True),
+        save_excel=output_data.get("save_excel", True),
     )
 
 

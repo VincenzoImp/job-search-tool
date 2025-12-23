@@ -78,7 +78,7 @@ Central configuration file containing all customizable settings with extensive d
 - **parallel**: max_workers for concurrent execution
 - **retry**: max_attempts, base_delay, backoff_factor
 - **logging**: level, file path, rotation settings
-- **output**: results_dir, data_dir, database_file
+- **output**: results_dir, data_dir, database_file, save_csv, save_excel
 - **profile**: User information for display
 - **scheduler**: enabled, interval_hours, run_on_startup, retry settings
 - **notifications**: enabled, telegram configuration
@@ -95,7 +95,7 @@ Configuration loader with type-safe dataclasses:
 - `ParallelConfig`: Concurrency settings (max_workers)
 - `RetryConfig`: Retry logic parameters
 - `LoggingConfig`: Logging configuration
-- `OutputConfig`: File paths
+- `OutputConfig`: File paths and output options (save_csv, save_excel)
 - `ProfileConfig`: User profile information
 - `SchedulerConfig`: Scheduling settings (enabled, interval_hours, etc.)
 - `TelegramConfig`: Telegram bot settings (bot_token, chat_ids, etc.)
@@ -568,16 +568,42 @@ notifications:
     max_jobs_in_message: 10            # Top 10 jobs in message
 ```
 
+### Disable CSV/Excel Output
+
+Edit `config/settings.yaml`:
+
+```yaml
+output:
+  results_dir: "results"
+  data_dir: "data"
+  database_file: "jobs.db"
+  save_csv: false   # Disable CSV file generation
+  save_excel: false # Disable Excel file generation
+```
+
+The SQLite database is always used (required for core functionality). CSV/Excel are optional exports for human review.
+
 ## Output Files
 
 All files saved with timestamp format `YYYYMMDD_HHMMSS`:
 
+**Required (core system):**
+- `data/jobs.db` - SQLite database with full job history (PRIMARY storage)
+- `logs/search.log` - Structured log file with rotation
+
+**Optional (controlled by `save_csv` and `save_excel` in config):**
 - `results/all_jobs_{timestamp}.csv` - All jobs found
 - `results/all_jobs_{timestamp}.xlsx` - Excel with formatting
 - `results/relevant_jobs_{timestamp}.csv` - Jobs with score > threshold
 - `results/relevant_jobs_{timestamp}.xlsx` - Excel with highlighting
-- `data/jobs.db` - SQLite database with full job history
-- `logs/search.log` - Structured log file with rotation
+
+**Note:** The SQLite database is the PRIMARY storage used by the core system for:
+- Tracking all jobs seen across runs
+- Identifying new vs already-seen jobs
+- Determining which jobs to notify about
+- Marking jobs as "applied"
+
+CSV/Excel files are OPTIONAL and only used for human review/export. Set `save_csv: false` and `save_excel: false` in config to disable them.
 
 ## Troubleshooting
 
