@@ -353,77 +353,87 @@ def save_results(
     """
     logger = get_logger("output")
 
+    # Check if any output is enabled
+    if not config.output.save_csv and not config.output.save_excel:
+        logger.info("File output disabled (save_csv and save_excel are both false)")
+        return "", ""
+
     results_dir = config.results_path
     results_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    csv_path = ""
+    excel_path = ""
 
     # Save to CSV
-    csv_path = results_dir / f"{filename_prefix}_{timestamp}.csv"
-    jobs_df.to_csv(csv_path, index=False)
-    logger.info(f"Saved CSV: {csv_path}")
+    if config.output.save_csv:
+        csv_file = results_dir / f"{filename_prefix}_{timestamp}.csv"
+        jobs_df.to_csv(csv_file, index=False)
+        logger.info(f"Saved CSV: {csv_file}")
+        csv_path = str(csv_file)
 
     # Save to Excel with formatting
-    excel_path = results_dir / f"{filename_prefix}_{timestamp}.xlsx"
+    if config.output.save_excel:
+        excel_file = results_dir / f"{filename_prefix}_{timestamp}.xlsx"
 
-    try:
-        with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-            jobs_df.to_excel(writer, index=False, sheet_name="Jobs")
-            worksheet = writer.sheets["Jobs"]
+        try:
+            with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
+                jobs_df.to_excel(writer, index=False, sheet_name="Jobs")
+                worksheet = writer.sheets["Jobs"]
 
-            # Format header row
-            header_fill = PatternFill(
-                start_color="4472C4", end_color="4472C4", fill_type="solid"
-            )
-            header_font = Font(bold=True, color="FFFFFF")
-
-            for col_num, column_title in enumerate(jobs_df.columns, 1):
-                cell = worksheet.cell(row=1, column=col_num)
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.alignment = Alignment(horizontal="center")
-
-            # Auto-adjust column widths
-            for col_num, column in enumerate(jobs_df.columns, 1):
-                max_length = max(
-                    jobs_df[column].astype(str).map(len).max(),
-                    len(str(column)),
+                # Format header row
+                header_fill = PatternFill(
+                    start_color="4472C4", end_color="4472C4", fill_type="solid"
                 )
-                adjusted_width = min(max_length + 2, 50)
-                worksheet.column_dimensions[get_column_letter(col_num)].width = (
-                    adjusted_width
-                )
+                header_font = Font(bold=True, color="FFFFFF")
 
-            # Make URLs clickable
-            if "job_url" in jobs_df.columns:
-                url_col = jobs_df.columns.get_loc("job_url") + 1
-                for row_num in range(2, len(jobs_df) + 2):
-                    cell = worksheet.cell(row=row_num, column=url_col)
-                    if cell.value and str(cell.value).startswith("http"):
-                        cell.hyperlink = cell.value
-                        cell.font = Font(color="0563C1", underline="single")
+                for col_num, column_title in enumerate(jobs_df.columns, 1):
+                    cell = worksheet.cell(row=1, column=col_num)
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = Alignment(horizontal="center")
 
-            # Freeze header row
-            worksheet.freeze_panes = "A2"
+                # Auto-adjust column widths
+                for col_num, column in enumerate(jobs_df.columns, 1):
+                    max_length = max(
+                        jobs_df[column].astype(str).map(len).max(),
+                        len(str(column)),
+                    )
+                    adjusted_width = min(max_length + 2, 50)
+                    worksheet.column_dimensions[get_column_letter(col_num)].width = (
+                        adjusted_width
+                    )
 
-            # Conditional formatting for relevance score
-            if "relevance_score" in jobs_df.columns:
-                score_col = jobs_df.columns.get_loc("relevance_score") + 1
-                high_score_fill = PatternFill(
-                    start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"
-                )
-                for row_num in range(2, len(jobs_df) + 2):
-                    cell = worksheet.cell(row=row_num, column=score_col)
-                    if cell.value and int(cell.value) >= 30:
-                        cell.fill = high_score_fill
+                # Make URLs clickable
+                if "job_url" in jobs_df.columns:
+                    url_col = jobs_df.columns.get_loc("job_url") + 1
+                    for row_num in range(2, len(jobs_df) + 2):
+                        cell = worksheet.cell(row=row_num, column=url_col)
+                        if cell.value and str(cell.value).startswith("http"):
+                            cell.hyperlink = cell.value
+                            cell.font = Font(color="0563C1", underline="single")
 
-        logger.info(f"Saved Excel: {excel_path}")
+                # Freeze header row
+                worksheet.freeze_panes = "A2"
 
-    except Exception as e:
-        logger.warning(f"Could not save Excel file: {e}")
-        excel_path = None
+                # Conditional formatting for relevance score
+                if "relevance_score" in jobs_df.columns:
+                    score_col = jobs_df.columns.get_loc("relevance_score") + 1
+                    high_score_fill = PatternFill(
+                        start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"
+                    )
+                    for row_num in range(2, len(jobs_df) + 2):
+                        cell = worksheet.cell(row=row_num, column=score_col)
+                        if cell.value and int(cell.value) >= 30:
+                            cell.fill = high_score_fill
 
-    return str(csv_path), str(excel_path) if excel_path else ""
+            logger.info(f"Saved Excel: {excel_file}")
+            excel_path = str(excel_file)
+
+        except Exception as e:
+            logger.warning(f"Could not save Excel file: {e}")
+
+    return csv_path, excel_path
 
 
 def print_banner(config: Config) -> None:

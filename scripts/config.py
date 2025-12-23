@@ -202,6 +202,8 @@ class OutputConfig:
     results_dir: str = "results"
     data_dir: str = "data"
     database_file: str = "jobs.db"
+    save_csv: bool = True  # Save CSV files
+    save_excel: bool = True  # Save Excel files
 
 
 @dataclass
@@ -219,6 +221,37 @@ class ProfileConfig:
 
 
 @dataclass
+class SchedulerConfig:
+    """Scheduler configuration for automated periodic execution."""
+
+    enabled: bool = False  # If False, single-shot mode (backward compatible)
+    interval_hours: int = 24  # Run every N hours
+    run_on_startup: bool = True  # Execute immediately on startup
+    retry_on_failure: bool = True  # Retry if search fails
+    retry_delay_minutes: int = 30  # Wait time before retry
+
+
+@dataclass
+class TelegramConfig:
+    """Telegram notification configuration."""
+
+    enabled: bool = False
+    bot_token: str = ""  # From @BotFather
+    chat_ids: list[str] = field(default_factory=list)  # Recipients
+    send_summary: bool = True  # Send run summary
+    min_score_for_notification: int = 0  # Min score to include in notifications
+    max_jobs_in_message: int = 10  # Max jobs to show in message
+
+
+@dataclass
+class NotificationsConfig:
+    """Notifications configuration."""
+
+    enabled: bool = False
+    telegram: TelegramConfig = field(default_factory=TelegramConfig)
+
+
+@dataclass
 class Config:
     """Main configuration class containing all settings."""
 
@@ -230,6 +263,8 @@ class Config:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     profile: ProfileConfig = field(default_factory=ProfileConfig)
+    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+    notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
 
     @property
     def results_path(self) -> Path:
@@ -353,6 +388,8 @@ def _parse_output_config(data: dict[str, Any]) -> OutputConfig:
         results_dir=output_data.get("results_dir", "results"),
         data_dir=output_data.get("data_dir", "data"),
         database_file=output_data.get("database_file", "jobs.db"),
+        save_csv=output_data.get("save_csv", True),
+        save_excel=output_data.get("save_excel", True),
     )
 
 
@@ -373,6 +410,40 @@ def _parse_profile_config(data: dict[str, Any]) -> ProfileConfig:
         grant=profile_data.get("grant", defaults.grant),
         skills=profile_data.get("skills", defaults.skills),
         target=profile_data.get("target", defaults.target),
+    )
+
+
+def _parse_scheduler_config(data: dict[str, Any]) -> SchedulerConfig:
+    """Parse scheduler configuration from dict."""
+    scheduler_data = data.get("scheduler", {})
+    return SchedulerConfig(
+        enabled=scheduler_data.get("enabled", False),
+        interval_hours=scheduler_data.get("interval_hours", 24),
+        run_on_startup=scheduler_data.get("run_on_startup", True),
+        retry_on_failure=scheduler_data.get("retry_on_failure", True),
+        retry_delay_minutes=scheduler_data.get("retry_delay_minutes", 30),
+    )
+
+
+def _parse_telegram_config(data: dict[str, Any]) -> TelegramConfig:
+    """Parse Telegram configuration from dict."""
+    telegram_data = data.get("telegram", {})
+    return TelegramConfig(
+        enabled=telegram_data.get("enabled", False),
+        bot_token=telegram_data.get("bot_token", ""),
+        chat_ids=telegram_data.get("chat_ids", []),
+        send_summary=telegram_data.get("send_summary", True),
+        min_score_for_notification=telegram_data.get("min_score_for_notification", 0),
+        max_jobs_in_message=telegram_data.get("max_jobs_in_message", 10),
+    )
+
+
+def _parse_notifications_config(data: dict[str, Any]) -> NotificationsConfig:
+    """Parse notifications configuration from dict."""
+    notifications_data = data.get("notifications", {})
+    return NotificationsConfig(
+        enabled=notifications_data.get("enabled", False),
+        telegram=_parse_telegram_config(notifications_data),
     )
 
 
@@ -461,6 +532,8 @@ def load_config() -> Config:
         logging=_parse_logging_config(data),
         output=_parse_output_config(data),
         profile=_parse_profile_config(data),
+        scheduler=_parse_scheduler_config(data),
+        notifications=_parse_notifications_config(data),
     )
 
     # Ensure directories exist

@@ -2,9 +2,18 @@
 
 ## Project Overview
 
-This is an automated job search and analysis tool powered by the JobSpy library to aggregate positions from multiple job boards. It features parallel execution, relevance scoring, SQLite persistence, and an interactive Streamlit dashboard.
+This is an automated job search and analysis tool powered by the JobSpy library to aggregate positions from multiple job boards. It features parallel execution, relevance scoring, SQLite persistence, an interactive Streamlit dashboard, **automated scheduling**, and **Telegram notifications**.
 
 The tool is **highly customizable** through YAML configuration - no code changes needed to customize for different profiles, locations, or job types.
+
+### Key Features
+
+- **Automated Scheduling**: Run searches automatically at configurable intervals (default: 24 hours)
+- **Telegram Notifications**: Receive alerts when new relevant jobs are found
+- **Parallel Execution**: Fast searches using ThreadPoolExecutor
+- **Smart Deduplication**: Track jobs across runs, identify new vs. seen jobs
+- **Relevance Scoring**: Customizable keyword-based scoring system
+- **Interactive Dashboard**: Streamlit UI for exploring and filtering results
 
 ## Architecture
 
@@ -17,6 +26,9 @@ The tool is **highly customizable** through YAML configuration - no code changes
 - **Streamlit**: Interactive dashboard with caching
 - **PyYAML**: YAML configuration parsing
 - **Tenacity**: Retry logic with exponential backoff
+- **APScheduler**: Automated periodic execution
+- **python-telegram-bot**: Telegram notification integration
+- **Jinja2**: Template engine for notification formatting
 - **SQLite**: Job persistence and tracking across runs
 - **Docker**: Containerized environment for cross-platform compatibility
 
@@ -28,13 +40,19 @@ job-search-tool/
 │   ├── settings.yaml          # User configuration (gitignored)
 │   └── settings.example.yaml  # Example template with full documentation
 ├── scripts/
-│   ├── search_jobs.py         # Main job search with parallel execution
+│   ├── main.py                # Unified entry point (scheduler + notifications)
+│   ├── search_jobs.py         # Core job search with parallel execution
+│   ├── scheduler.py           # APScheduler integration for periodic runs
+│   ├── notifier.py            # Telegram notification system
+│   ├── report_generator.py    # Report formatting for notifications
 │   ├── analyze_jobs.py        # Post-search analysis and reporting
 │   ├── dashboard.py           # Streamlit interactive dashboard
 │   ├── config.py              # Configuration loader with validation
 │   ├── logger.py              # Structured logging with rotation
 │   ├── database.py            # SQLite persistence for job tracking
 │   └── models.py              # Type-safe dataclasses
+├── templates/                  # Jinja2 templates for notifications
+│   └── telegram_summary.md.j2 # Telegram message template
 ├── results/                    # Generated CSV/Excel files (gitignored)
 ├── data/                       # SQLite database (gitignored)
 ├── logs/                       # Log files with rotation (gitignored)
@@ -60,8 +78,10 @@ Central configuration file containing all customizable settings with extensive d
 - **parallel**: max_workers for concurrent execution
 - **retry**: max_attempts, base_delay, backoff_factor
 - **logging**: level, file path, rotation settings
-- **output**: results_dir, data_dir, database_file
+- **output**: results_dir, data_dir, database_file, save_csv, save_excel
 - **profile**: User information for display
+- **scheduler**: enabled, interval_hours, run_on_startup, retry settings
+- **notifications**: enabled, telegram configuration
 
 See `config/settings.example.yaml` for full parameter documentation.
 
@@ -75,8 +95,11 @@ Configuration loader with type-safe dataclasses:
 - `ParallelConfig`: Concurrency settings (max_workers)
 - `RetryConfig`: Retry logic parameters
 - `LoggingConfig`: Logging configuration
-- `OutputConfig`: File paths
+- `OutputConfig`: File paths and output options (save_csv, save_excel)
 - `ProfileConfig`: User profile information
+- `SchedulerConfig`: Scheduling settings (enabled, interval_hours, etc.)
+- `TelegramConfig`: Telegram bot settings (bot_token, chat_ids, etc.)
+- `NotificationsConfig`: Notification channel settings
 - `Config`: Main configuration class combining all above
 
 **Key Functions**:
@@ -192,12 +215,82 @@ Main job search with parallel execution:
   - Excel formatting: colored headers, hyperlinks, freeze panes
   - Conditional formatting for high scores
 
-- `main()`: Entry point
+- `main()`: Legacy entry point (use main.py instead)
   - Loads config, sets up logging
   - Runs search, saves results
   - Updates database with full job details, prints summary
 
-### 7. scripts/analyze_jobs.py
+### 7. scripts/main.py (NEW - Unified Entry Point)
+
+Main entry point that integrates scheduling and notifications:
+
+**Key Functions**:
+- `run_job_search()`: Execute single search iteration with notifications
+- `main()`: Entry point that handles both single-shot and scheduled modes
+
+**Execution Flow**:
+1. Load configuration
+2. Determine mode (single-shot vs scheduled)
+3. If scheduled: start APScheduler with configured interval
+4. Execute search via `search_switzerland_jobs()`
+5. Save results to CSV/Excel
+6. Update database
+7. Send Telegram notification if new jobs found
+
+### 8. scripts/scheduler.py (NEW)
+
+APScheduler integration for automated periodic execution:
+
+**Key Class**: `JobSearchScheduler`
+- `start()`: Start continuous scheduled execution
+- `run_once()`: Execute single search (non-scheduled mode)
+- `stop()`: Graceful shutdown
+
+**Features**:
+- Configurable interval (default: 24 hours)
+- Optional immediate run on startup
+- Retry logic on failure
+- Graceful signal handling (SIGINT, SIGTERM)
+
+### 9. scripts/notifier.py (NEW)
+
+Telegram notification system:
+
+**Key Classes**:
+- `BaseNotifier`: Abstract base class for notification channels
+- `TelegramNotifier`: Telegram-specific implementation
+- `NotificationManager`: Manages all configured channels
+
+**NotificationData Structure**:
+```python
+@dataclass
+class NotificationData:
+    run_timestamp: datetime
+    total_jobs_found: int
+    new_jobs_count: int
+    updated_jobs_count: int
+    avg_score: float
+    top_jobs: list[JobDBRecord]
+    all_new_jobs: list[JobDBRecord]
+```
+
+**Telegram Message Format**:
+- Summary header with run statistics
+- Top N new jobs with details (title, company, location, score)
+- Clickable links to job postings
+- MarkdownV2 formatting
+
+### 10. scripts/report_generator.py (NEW)
+
+Report formatting utilities:
+
+**Key Functions**:
+- `generate_text_summary()`: Plain text report
+- `generate_markdown_summary()`: Markdown formatted report
+- `jobs_to_dataframe()`: Convert JobDBRecord list to DataFrame
+- `generate_excel_report()`: Create Excel file in memory (BytesIO)
+
+### 11. scripts/analyze_jobs.py
 
 Results analysis and reporting:
 
@@ -252,7 +345,7 @@ if str(BASE_DIR).startswith("/app"):
 
 ## Common Commands
 
-### Run Job Search
+### Run Job Search (Single-Shot Mode)
 
 **Using Docker** (recommended):
 ```bash
@@ -274,8 +367,11 @@ docker-compose logs -f
 # Install dependencies
 pip install -r requirements.txt
 
-# Run search
+# Run search (new unified entry point)
 cd scripts
+python main.py
+
+# Or use legacy entry point
 python search_jobs.py
 
 # Analyze results
@@ -283,6 +379,33 @@ python analyze_jobs.py
 
 # Launch dashboard
 streamlit run dashboard.py
+```
+
+### Run Scheduled Mode (with Notifications)
+
+First, configure `config/settings.yaml`:
+```yaml
+scheduler:
+  enabled: true
+  interval_hours: 24
+
+notifications:
+  enabled: true
+  telegram:
+    enabled: true
+    bot_token: "YOUR_BOT_TOKEN"
+    chat_ids:
+      - "YOUR_CHAT_ID"
+```
+
+Then run:
+```bash
+# Using Docker (recommended - runs continuously)
+docker-compose --profile scheduler up scheduler --build
+
+# Or using local Python
+cd scripts
+python main.py
 ```
 
 ### Launch Dashboard
@@ -296,6 +419,34 @@ docker-compose --profile dashboard up dashboard
 cd scripts
 streamlit run dashboard.py
 ```
+
+### Setup Telegram Bot
+
+1. **Create bot with @BotFather**:
+   - Open Telegram and search for `@BotFather`
+   - Send `/newbot` and follow instructions
+   - Copy the bot token (format: `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
+
+2. **Get your chat_id**:
+   - Start a chat with your new bot (send any message)
+   - Visit: `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
+   - Look for `"chat":{"id": YOUR_CHAT_ID}`
+
+3. **Configure settings.yaml**:
+   ```yaml
+   notifications:
+     enabled: true
+     telegram:
+       enabled: true
+       bot_token: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+       chat_ids:
+         - "987654321"  # Your chat ID
+   ```
+
+4. **Test notification**:
+   ```bash
+   docker-compose --profile scheduler up scheduler --build
+   ```
 
 ### Database Queries
 
@@ -387,16 +538,72 @@ retry:
   base_delay: 5
 ```
 
+### Configure Scheduling
+
+Edit `config/settings.yaml`:
+
+```yaml
+scheduler:
+  enabled: true           # Enable scheduled mode
+  interval_hours: 24      # Run every 24 hours
+  run_on_startup: true    # Run immediately when starting
+  retry_on_failure: true  # Retry if search fails
+  retry_delay_minutes: 30 # Wait 30 min before retry
+```
+
+### Configure Telegram Notifications
+
+Edit `config/settings.yaml`:
+
+```yaml
+notifications:
+  enabled: true
+  telegram:
+    enabled: true
+    bot_token: "YOUR_BOT_TOKEN"        # From @BotFather
+    chat_ids:
+      - "YOUR_CHAT_ID"                 # Your personal chat ID
+    send_summary: true                 # Send after each run
+    min_score_for_notification: 15     # Only jobs with score >= 15
+    max_jobs_in_message: 10            # Top 10 jobs in message
+```
+
+### Disable CSV/Excel Output
+
+Edit `config/settings.yaml`:
+
+```yaml
+output:
+  results_dir: "results"
+  data_dir: "data"
+  database_file: "jobs.db"
+  save_csv: false   # Disable CSV file generation
+  save_excel: false # Disable Excel file generation
+```
+
+The SQLite database is always used (required for core functionality). CSV/Excel are optional exports for human review.
+
 ## Output Files
 
 All files saved with timestamp format `YYYYMMDD_HHMMSS`:
 
+**Required (core system):**
+- `data/jobs.db` - SQLite database with full job history (PRIMARY storage)
+- `logs/search.log` - Structured log file with rotation
+
+**Optional (controlled by `save_csv` and `save_excel` in config):**
 - `results/all_jobs_{timestamp}.csv` - All jobs found
 - `results/all_jobs_{timestamp}.xlsx` - Excel with formatting
 - `results/relevant_jobs_{timestamp}.csv` - Jobs with score > threshold
 - `results/relevant_jobs_{timestamp}.xlsx` - Excel with highlighting
-- `data/jobs.db` - SQLite database with full job history
-- `logs/search.log` - Structured log file with rotation
+
+**Note:** The SQLite database is the PRIMARY storage used by the core system for:
+- Tracking all jobs seen across runs
+- Identifying new vs already-seen jobs
+- Determining which jobs to notify about
+- Marking jobs as "applied"
+
+CSV/Excel files are OPTIONAL and only used for human review/export. Set `save_csv: false` and `save_excel: false` in config to disable them.
 
 ## Troubleshooting
 
@@ -636,4 +843,15 @@ MIT License - See LICENSE file for details.
 
 ---
 
-**Last Updated**: 2025-12-22
+**Last Updated**: 2025-12-23
+
+## Changelog
+
+### v2.0.0 (2025-12-23)
+- **NEW**: Automated scheduling with APScheduler
+- **NEW**: Telegram notifications for new jobs
+- **NEW**: Unified entry point (`main.py`)
+- **NEW**: Report generator for notification formatting
+- **NEW**: Templates directory for Jinja2 templates
+- Updated Docker configuration with scheduler service
+- Backward compatible - existing workflows still work
