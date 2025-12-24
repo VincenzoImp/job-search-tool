@@ -306,7 +306,7 @@ Results analysis and reporting:
 - `analyze_database(config)`: Database statistics
 - `export_filtered_by_company(df, companies, config)`: Filter by company
 
-### 8. scripts/dashboard.py
+### 12. scripts/dashboard.py
 
 Streamlit interactive dashboard:
 
