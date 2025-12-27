@@ -1,5 +1,5 @@
 """
-Configuration loader for Switzerland Jobs Search.
+Configuration loader for Job Search Tool.
 
 Loads settings from YAML configuration file with fallback to defaults.
 Provides type-safe access to all configuration values.
@@ -33,8 +33,7 @@ class SearchConfig:
     )
     locations: list[str] = field(
         default_factory=lambda: [
-            "Zurich, Switzerland",
-            "Switzerland",
+            "Remote",
         ]
     )
 
@@ -43,6 +42,7 @@ class SearchConfig:
     is_remote: bool = False  # Filter for remote-only jobs
     easy_apply: bool | None = None  # Filter for easy apply jobs
     offset: int = 0  # Start search from offset
+    country_indeed: str = "USA"  # Country for Indeed domain (USA, UK, Germany, etc.)
 
     # Output format parameters
     enforce_annual_salary: bool = True  # Convert all salaries to yearly
@@ -186,6 +186,35 @@ class RetryConfig:
 
 
 @dataclass
+class ThrottlingConfig:
+    """Throttling configuration for rate limit prevention."""
+
+    enabled: bool = True
+    default_delay: float = 1.5
+    site_delays: dict[str, float] = field(
+        default_factory=lambda: {
+            "linkedin": 3.0,
+            "indeed": 1.0,
+            "glassdoor": 1.5,
+            "google": 2.0,
+            "ziprecruiter": 1.5,
+        }
+    )
+    jitter: float = 0.3
+    rate_limit_cooldown: float = 30.0
+
+    def get_delay(self, site: str) -> float:
+        """Get delay for a specific site with jitter applied."""
+        import random
+
+        base_delay = self.site_delays.get(site.lower(), self.default_delay)
+        if self.jitter > 0:
+            jitter_amount = base_delay * self.jitter
+            return base_delay + random.uniform(-jitter_amount, jitter_amount)
+        return base_delay
+
+
+@dataclass
 class LoggingConfig:
     """Logging configuration."""
 
@@ -260,6 +289,7 @@ class Config:
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
     parallel: ParallelConfig = field(default_factory=ParallelConfig)
     retry: RetryConfig = field(default_factory=RetryConfig)
+    throttling: ThrottlingConfig = field(default_factory=ThrottlingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     profile: ProfileConfig = field(default_factory=ProfileConfig)
@@ -314,13 +344,14 @@ def _parse_search_config(data: dict[str, Any]) -> SearchConfig:
         sites=search_data.get("sites", ["indeed", "linkedin", "glassdoor"]),
         locations=search_data.get(
             "locations",
-            ["Zurich, Switzerland", "Switzerland"],
+            ["Remote"],
         ),
         # JobSpy core parameters
         distance=search_data.get("distance", 50),
         is_remote=search_data.get("is_remote", False),
         easy_apply=search_data.get("easy_apply"),
         offset=search_data.get("offset", 0),
+        country_indeed=search_data.get("country_indeed", "USA"),
         # Output format parameters
         enforce_annual_salary=search_data.get("enforce_annual_salary", True),
         description_format=search_data.get("description_format", "markdown"),
@@ -367,6 +398,27 @@ def _parse_retry_config(data: dict[str, Any]) -> RetryConfig:
         max_attempts=retry_data.get("max_attempts", 3),
         base_delay=retry_data.get("base_delay", 2.0),
         backoff_factor=retry_data.get("backoff_factor", 2.0),
+    )
+
+
+def _parse_throttling_config(data: dict[str, Any]) -> ThrottlingConfig:
+    """Parse throttling configuration from dict."""
+    throttling_data = data.get("throttling", {})
+    return ThrottlingConfig(
+        enabled=throttling_data.get("enabled", True),
+        default_delay=throttling_data.get("default_delay", 1.5),
+        site_delays=throttling_data.get(
+            "site_delays",
+            {
+                "linkedin": 3.0,
+                "indeed": 1.0,
+                "glassdoor": 1.5,
+                "google": 2.0,
+                "ziprecruiter": 1.5,
+            },
+        ),
+        jitter=throttling_data.get("jitter", 0.3),
+        rate_limit_cooldown=throttling_data.get("rate_limit_cooldown", 30.0),
     )
 
 
@@ -529,6 +581,7 @@ def load_config() -> Config:
         scoring=_parse_scoring_config(data),
         parallel=_parse_parallel_config(data),
         retry=_parse_retry_config(data),
+        throttling=_parse_throttling_config(data),
         logging=_parse_logging_config(data),
         output=_parse_output_config(data),
         profile=_parse_profile_config(data),

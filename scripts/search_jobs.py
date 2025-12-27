@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Switzerland Jobs Search - PhD & Software Engineering Positions.
+Job Search Tool - Automated Job Aggregation.
 
-Searches for blockchain, distributed systems, and data analysis roles in Switzerland.
-Features parallel execution, retry logic, SQLite persistence, and configurable scoring.
+Aggregates job listings from multiple job boards using JobSpy.
+Features parallel execution, throttling, retry logic, SQLite persistence, and configurable scoring.
 """
 
 from __future__ import annotations
 
 import hashlib
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any
@@ -33,6 +34,95 @@ from models import Job, SearchSummary
 
 # Thread-safe lock for shared data structures
 _jobs_lock = threading.Lock()
+
+
+class ThrottledExecutor:
+    """ThreadPoolExecutor wrapper with per-site rate limiting."""
+
+    def __init__(self, config: Config):
+        """
+        Initialize throttled executor.
+
+        Args:
+            config: Configuration object with throttling settings.
+        """
+        self.config = config
+        self.site_locks: dict[str, threading.Lock] = {}
+        self.site_last_request: dict[str, float] = {}
+        self._lock = threading.Lock()
+        self._logger = get_logger("throttle")
+
+    def _get_site_lock(self, site: str) -> threading.Lock:
+        """Get or create a lock for a specific site."""
+        with self._lock:
+            if site not in self.site_locks:
+                self.site_locks[site] = threading.Lock()
+                self.site_last_request[site] = 0
+            return self.site_locks[site]
+
+    def throttled_search(
+        self,
+        query: str,
+        location: str,
+        config: Config,
+    ) -> tuple[str, str, pd.DataFrame | None, str | None]:
+        """
+        Execute search with throttling based on configured sites.
+
+        Since JobSpy internally searches all configured sites in parallel,
+        we throttle based on the slowest (most restrictive) site delay
+        to ensure we don't overwhelm any individual site.
+
+        Args:
+            query: Search term.
+            location: Location to search.
+            config: Configuration object.
+
+        Returns:
+            Tuple of (query, location, results_df, error_message).
+        """
+        if not config.throttling.enabled:
+            # No throttling, execute immediately
+            return search_single_query(query, location, config)
+
+        # Get the maximum delay across all configured sites
+        # This ensures we don't overwhelm the most restrictive site
+        max_delay = config.throttling.default_delay
+        for site in config.search.sites:
+            site_delay = config.throttling.site_delays.get(
+                site.lower(), config.throttling.default_delay
+            )
+            max_delay = max(max_delay, site_delay)
+
+        # Use a global lock for throttling since we're searching all sites at once
+        global_lock = self._get_site_lock("_global")
+
+        with global_lock:
+            # Calculate required delay
+            now = time.time()
+            elapsed = now - self.site_last_request.get("_global", 0)
+
+            # Apply jitter to the delay
+            if config.throttling.jitter > 0:
+                import random
+
+                jitter_amount = max_delay * config.throttling.jitter
+                actual_delay = max_delay + random.uniform(-jitter_amount, jitter_amount)
+            else:
+                actual_delay = max_delay
+
+            if elapsed < actual_delay:
+                sleep_time = actual_delay - elapsed
+                self._logger.debug(
+                    f"Throttling: waiting {sleep_time:.2f}s before next request"
+                )
+                time.sleep(sleep_time)
+
+            # Update last request time
+            self.site_last_request["_global"] = time.time()
+
+        # Execute search outside the lock
+        return search_single_query(query, location, config)
 
 
 def calculate_relevance_score(row: pd.Series, config: Config) -> int:
@@ -156,7 +246,7 @@ def search_single_query(
             location=location,
             results_wanted=config.search.results_wanted,
             hours_old=config.search.hours_old,
-            country_indeed="Switzerland",
+            country_indeed=config.search.country_indeed,
             # JobSpy core parameters
             distance=config.search.distance,
             is_remote=config.search.is_remote,
@@ -194,9 +284,9 @@ def search_single_query(
         return query, location, None, error_msg
 
 
-def search_switzerland_jobs(config: Config) -> tuple[pd.DataFrame | None, SearchSummary]:
+def search_jobs(config: Config) -> tuple[pd.DataFrame | None, SearchSummary]:
     """
-    Search for relevant jobs in Switzerland using parallel execution.
+    Search for jobs using parallel execution with throttling.
 
     Args:
         config: Configuration object.
@@ -207,7 +297,7 @@ def search_switzerland_jobs(config: Config) -> tuple[pd.DataFrame | None, Search
     logger = get_logger("search")
     summary = SearchSummary()
 
-    log_section(logger, "SEARCHING FOR JOBS IN SWITZERLAND")
+    log_section(logger, "SEARCHING FOR JOBS")
 
     queries = config.get_all_queries()
     locations = config.search.locations
@@ -220,15 +310,40 @@ def search_switzerland_jobs(config: Config) -> tuple[pd.DataFrame | None, Search
     logger.info(f"Queries: {len(queries)}, Locations: {len(locations)}")
     logger.info(f"Parallel workers: {config.parallel.max_workers}")
 
+    # Log throttling status
+    if config.throttling.enabled:
+        # Calculate effective delay (max of configured sites)
+        max_delay = config.throttling.default_delay
+        for site in config.search.sites:
+            site_delay = config.throttling.site_delays.get(
+                site.lower(), config.throttling.default_delay
+            )
+            max_delay = max(max_delay, site_delay)
+        logger.info(
+            f"Throttling enabled: {max_delay:.1f}s delay "
+            f"(jitter={config.throttling.jitter:.0%})"
+        )
+        # Estimate total time
+        estimated_time = len(tasks) * max_delay / config.parallel.max_workers
+        logger.info(f"Estimated minimum time: {estimated_time / 60:.1f} minutes")
+    else:
+        logger.info("Throttling disabled")
+
     all_jobs: list[pd.DataFrame] = []
     seen_jobs: set[str] = set()  # For deduplication
 
     progress = ProgressLogger(logger, len(tasks), "Job search")
 
-    # Execute searches in parallel
+    # Create throttled executor
+    throttled_executor = ThrottledExecutor(config)
+
+    # Execute searches in parallel with throttling
     with ThreadPoolExecutor(max_workers=config.parallel.max_workers) as executor:
         futures = {
-            executor.submit(search_single_query, q, loc, config): (q, loc)
+            executor.submit(throttled_executor.throttled_search, q, loc, config): (
+                q,
+                loc,
+            )
             for q, loc in tasks
         }
 
@@ -441,14 +556,10 @@ def print_banner(config: Config) -> None:
     profile = config.profile
     banner = f"""
     ╔══════════════════════════════════════════════════════════════════════╗
-    ║          Switzerland Jobs Search - {profile.name:<29} ║
+    ║             Job Search Tool - {profile.name:<33} ║
     ║                                                                      ║
     ║  Profile:                                                            ║
     ║  • {profile.current_position:<65} ║
-    ║  • {profile.visiting_position:<65} ║
-    ║  • Research: {profile.research_focus:<54} ║
-    ║  • Published: {profile.publication:<53} ║
-    ║  • {profile.grant:<65} ║
     ║  • Skills: {profile.skills:<56} ║
     ║  • Target: {profile.target:<56} ║
     ╚══════════════════════════════════════════════════════════════════════╝
@@ -488,7 +599,7 @@ def main() -> None:
     logger.info(f"Database: {db_stats['total_jobs']} jobs tracked")
 
     # Search for jobs
-    all_jobs, summary = search_switzerland_jobs(config)
+    all_jobs, summary = search_jobs(config)
 
     if all_jobs is None or len(all_jobs) == 0:
         logger.error("No jobs found. Exiting.")

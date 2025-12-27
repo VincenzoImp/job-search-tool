@@ -11,6 +11,7 @@ The tool is **highly customizable** through YAML configuration - no code changes
 - **Automated Scheduling**: Run searches automatically at configurable intervals (default: 24 hours)
 - **Telegram Notifications**: Receive alerts when new relevant jobs are found
 - **Parallel Execution**: Fast searches using ThreadPoolExecutor
+- **Rate Limit Prevention**: Configurable throttling with per-site delays and jitter
 - **Smart Deduplication**: Track jobs across runs, identify new vs. seen jobs
 - **Relevance Scoring**: Customizable keyword-based scoring system
 - **Interactive Dashboard**: Streamlit UI for exploring and filtering results
@@ -77,6 +78,7 @@ Central configuration file containing all customizable settings with extensive d
 - **scoring**: threshold, weights, keywords for relevance calculation
 - **parallel**: max_workers for concurrent execution
 - **retry**: max_attempts, base_delay, backoff_factor
+- **throttling**: enabled, default_delay, site_delays, jitter, rate_limit_cooldown
 - **logging**: level, file path, rotation settings
 - **output**: results_dir, data_dir, database_file, save_csv, save_excel
 - **profile**: User information for display
@@ -94,6 +96,7 @@ Configuration loader with type-safe dataclasses:
 - `ScoringConfig`: Relevance scoring weights and keywords
 - `ParallelConfig`: Concurrency settings (max_workers)
 - `RetryConfig`: Retry logic parameters
+- `ThrottlingConfig`: Rate limit prevention (default_delay, site_delays, jitter)
 - `LoggingConfig`: Logging configuration
 - `OutputConfig`: File paths and output options (save_csv, save_excel)
 - `ProfileConfig`: User profile information
@@ -190,7 +193,14 @@ CREATE TABLE jobs (
 
 ### 6. scripts/search_jobs.py
 
-Main job search with parallel execution:
+Main job search with parallel execution and throttling:
+
+**Key Classes**:
+
+- `ThrottledExecutor`: ThreadPoolExecutor wrapper with rate limiting
+  - Per-site delays with configurable jitter
+  - Thread-safe locking for concurrent access
+  - `throttled_search()`: Execute search with delay enforcement
 
 **Key Functions**:
 
@@ -202,8 +212,9 @@ Main job search with parallel execution:
   - Retry logic with exponential backoff via tenacity
   - Returns (query, location, df, error)
 
-- `search_jobs(config)`: Main parallel search
-  - Uses ThreadPoolExecutor with configurable workers
+- `search_jobs(config)`: Main parallel search with throttling
+  - Uses ThreadPoolExecutor with ThrottledExecutor
+  - Logs throttling status and estimated time
   - Incremental deduplication during collection
   - Returns (combined_df, SearchSummary)
 
@@ -232,7 +243,7 @@ Main entry point that integrates scheduling and notifications:
 1. Load configuration
 2. Determine mode (single-shot vs scheduled)
 3. If scheduled: start APScheduler with configured interval
-4. Execute search via `search_switzerland_jobs()`
+4. Execute search via `search_jobs()`
 5. Save results to CSV/Excel
 6. Update database
 7. Send Telegram notification if new jobs found
@@ -521,8 +532,10 @@ Edit `config/settings.yaml`:
 search:
   results_wanted: 20    # Reduce if rate limited
   hours_old: 168        # 7 days instead of 30
+  country_indeed: "USA" # Country for Indeed domain
   locations:
-    - "Zurich, Switzerland"
+    - "New York, NY"
+    - "Remote"
 ```
 
 ### Adjust Parallelism
@@ -550,6 +563,32 @@ scheduler:
   retry_on_failure: true  # Retry if search fails
   retry_delay_minutes: 30 # Wait 30 min before retry
 ```
+
+### Configure Throttling
+
+Throttling adds delays between requests to prevent rate limiting from job boards. Edit `config/settings.yaml`:
+
+```yaml
+throttling:
+  enabled: true           # Enable throttling (recommended)
+  default_delay: 1.5      # Default delay between requests (seconds)
+  site_delays:            # Per-site delay overrides
+    linkedin: 3.0         # LinkedIn has aggressive rate limiting
+    indeed: 1.0           # Indeed is more lenient
+    glassdoor: 1.5        # Glassdoor is moderate
+    google: 2.0
+    ziprecruiter: 1.5
+  jitter: 0.3             # Random variation (0.3 = 30%)
+  rate_limit_cooldown: 30.0  # Cooldown after rate limit error
+```
+
+**Expected performance with throttling enabled:**
+
+| Configuration | 100 Searches | Notes |
+|---------------|--------------|-------|
+| No throttling, 4 workers | ~3 min | High rate limit risk |
+| 1.5s delay, 4 workers | ~8 min | Moderate risk |
+| 3.0s delay, 2 workers | ~15 min | Low risk |
 
 ### Configure Telegram Notifications
 
@@ -609,13 +648,16 @@ CSV/Excel files are OPTIONAL and only used for human review/export. Set `save_cs
 
 ### Rate Limiting
 
-**Symptoms**: Empty results, connection errors after some queries
+**Symptoms**: Empty results, connection errors after some queries, 429 errors
 
 **Solutions**:
-1. Reduce `parallel.max_workers` to 3 in settings.yaml
-2. Reduce `search.results_wanted` to 20
-3. Increase `retry.base_delay` to 5
-4. Run at different times of day
+1. Enable throttling if disabled: `throttling.enabled: true`
+2. Increase delays: `throttling.default_delay: 2.0` or higher
+3. Increase LinkedIn-specific delay: `throttling.site_delays.linkedin: 5.0`
+4. Reduce `parallel.max_workers` to 2-3 in settings.yaml
+5. Reduce `search.results_wanted` to 20
+6. Increase `retry.base_delay` to 5
+7. Run at different times of day
 
 ### Docker Build Fails
 
@@ -722,12 +764,22 @@ mypy scripts/
 
 ## Performance
 
-### Parallel Execution
+### Parallel Execution with Throttling
 
-- Default 5 workers provides good balance
-- Reduce to 3 if hitting rate limits
+- Default 5 workers with throttling enabled provides balance between speed and rate limit safety
+- Throttling uses per-site delays (LinkedIn: 3s, Indeed: 1s, etc.)
+- Jitter (default 30%) randomizes delays to avoid detection patterns
+- Reduce workers to 2-3 if still hitting rate limits
 - Each worker handles one query-location pair
-- Execution time: ~3 minutes (was ~15 minutes sequential)
+
+**Estimated execution times (100 searches):**
+
+| Throttling | Workers | Est. Time | Rate Limit Risk |
+|------------|---------|-----------|-----------------|
+| Disabled | 5 | ~3 min | High |
+| 1.5s delay | 5 | ~8 min | Moderate |
+| 3.0s delay | 3 | ~15 min | Low |
+| 3.0s delay | 1 | ~30 min | Minimal |
 
 ### Memory Usage
 
@@ -843,9 +895,18 @@ MIT License - See LICENSE file for details.
 
 ---
 
-**Last Updated**: 2025-12-23
+**Last Updated**: 2025-12-27
 
 ## Changelog
+
+### v2.1.0 (2025-12-27)
+- **NEW**: Configurable throttling to prevent rate limiting
+- **NEW**: Per-site delay configuration with jitter
+- **NEW**: `country_indeed` configuration option
+- **REFACTOR**: Renamed `search_switzerland_jobs()` to `search_jobs()` for genericity
+- **REFACTOR**: Removed Switzerland-specific defaults (now uses generic defaults)
+- **REFACTOR**: Updated logger names from `switzerland_jobs` to `job_search`
+- Simplified banner display
 
 ### v2.0.0 (2025-12-23)
 - **NEW**: Automated scheduling with APScheduler
