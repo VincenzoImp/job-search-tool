@@ -8,6 +8,7 @@ Provides type-safe access to all configuration values.
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -215,6 +216,16 @@ class ThrottlingConfig:
 
 
 @dataclass
+class PostFilterConfig:
+    """Post-filtering configuration for validating search results."""
+
+    enabled: bool = True  # Enable fuzzy post-filtering
+    min_similarity: int = 80  # Minimum similarity score (0-100) for fuzzy match
+    check_query_terms: bool = True  # Verify all query terms are present in results
+    check_location: bool = True  # Verify location matches configured locations
+
+
+@dataclass
 class LoggingConfig:
     """Logging configuration."""
 
@@ -239,14 +250,14 @@ class OutputConfig:
 class ProfileConfig:
     """User profile information for display."""
 
-    name: str = "Vincenzo Imperati"
-    current_position: str = "PhD Candidate @ Sapienza University (Nov 2023 - Oct 2026)"
-    visiting_position: str = "Visiting PhD @ ETH Zurich (Sep 2025 - Oct 2026)"
-    research_focus: str = "User behavior in distributed systems & blockchains"
-    publication: str = "USENIX Security (Telegram conspiracy channels)"
-    grant: str = "OpenSats Grant: Nostr protocol development"
-    skills: str = "Python, TypeScript, C++, React, Data Analysis"
-    target: str = "Research, Software Engineering, Summer 2026 positions"
+    name: str = "Your Name"
+    current_position: str = "Current Role @ Company"
+    visiting_position: str = ""
+    research_focus: str = ""
+    publication: str = ""
+    grant: str = ""
+    skills: str = "Python, JavaScript, React, PostgreSQL"
+    target: str = "Senior Software Engineer, Tech Lead"
 
 
 @dataclass
@@ -290,6 +301,7 @@ class Config:
     parallel: ParallelConfig = field(default_factory=ParallelConfig)
     retry: RetryConfig = field(default_factory=RetryConfig)
     throttling: ThrottlingConfig = field(default_factory=ThrottlingConfig)
+    post_filter: PostFilterConfig = field(default_factory=PostFilterConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     profile: ProfileConfig = field(default_factory=ProfileConfig)
@@ -334,12 +346,34 @@ def _load_yaml() -> dict[str, Any]:
 
 
 def _parse_search_config(data: dict[str, Any]) -> SearchConfig:
-    """Parse search configuration from dict."""
+    """Parse search configuration from dict with validation."""
     search_data = data.get("search", {})
+
+    # Validate numeric values
+    results_wanted = search_data.get("results_wanted", 50)
+    if results_wanted <= 0:
+        raise ValueError(f"results_wanted must be positive, got {results_wanted}")
+
+    hours_old = search_data.get("hours_old", 720)
+    if hours_old < 0:
+        raise ValueError(f"hours_old cannot be negative, got {hours_old}")
+
+    distance = search_data.get("distance", 50)
+    if distance <= 0:
+        raise ValueError(f"distance must be positive, got {distance}")
+
+    offset = search_data.get("offset", 0)
+    if offset < 0:
+        raise ValueError(f"offset cannot be negative, got {offset}")
+
+    verbose = search_data.get("verbose", 1)
+    if verbose not in [0, 1, 2]:
+        raise ValueError(f"verbose must be 0, 1, or 2, got {verbose}")
+
     return SearchConfig(
         # Core search parameters
-        results_wanted=search_data.get("results_wanted", 50),
-        hours_old=search_data.get("hours_old", 720),
+        results_wanted=results_wanted,
+        hours_old=hours_old,
         job_types=search_data.get("job_types", ["fulltime"]),
         sites=search_data.get("sites", ["indeed", "linkedin", "glassdoor"]),
         locations=search_data.get(
@@ -347,15 +381,15 @@ def _parse_search_config(data: dict[str, Any]) -> SearchConfig:
             ["Remote"],
         ),
         # JobSpy core parameters
-        distance=search_data.get("distance", 50),
+        distance=distance,
         is_remote=search_data.get("is_remote", False),
         easy_apply=search_data.get("easy_apply"),
-        offset=search_data.get("offset", 0),
+        offset=offset,
         country_indeed=search_data.get("country_indeed", "USA"),
         # Output format parameters
         enforce_annual_salary=search_data.get("enforce_annual_salary", True),
         description_format=search_data.get("description_format", "markdown"),
-        verbose=search_data.get("verbose", 1),
+        verbose=verbose,
         # LinkedIn-specific parameters
         linkedin_fetch_description=search_data.get("linkedin_fetch_description", True),
         linkedin_company_ids=search_data.get("linkedin_company_ids"),
@@ -422,6 +456,22 @@ def _parse_throttling_config(data: dict[str, Any]) -> ThrottlingConfig:
     )
 
 
+def _parse_post_filter_config(data: dict[str, Any]) -> PostFilterConfig:
+    """Parse post-filter configuration from dict with validation."""
+    post_filter_data = data.get("post_filter", {})
+
+    min_similarity = post_filter_data.get("min_similarity", 80)
+    if not 0 <= min_similarity <= 100:
+        raise ValueError(f"min_similarity must be between 0 and 100, got {min_similarity}")
+
+    return PostFilterConfig(
+        enabled=post_filter_data.get("enabled", True),
+        min_similarity=min_similarity,
+        check_query_terms=post_filter_data.get("check_query_terms", True),
+        check_location=post_filter_data.get("check_location", True),
+    )
+
+
 def _parse_logging_config(data: dict[str, Any]) -> LoggingConfig:
     """Parse logging configuration from dict."""
     logging_data = data.get("logging", {})
@@ -466,14 +516,23 @@ def _parse_profile_config(data: dict[str, Any]) -> ProfileConfig:
 
 
 def _parse_scheduler_config(data: dict[str, Any]) -> SchedulerConfig:
-    """Parse scheduler configuration from dict."""
+    """Parse scheduler configuration from dict with validation."""
     scheduler_data = data.get("scheduler", {})
+
+    interval_hours = scheduler_data.get("interval_hours", 24)
+    if interval_hours <= 0:
+        raise ValueError(f"interval_hours must be positive, got {interval_hours}")
+
+    retry_delay_minutes = scheduler_data.get("retry_delay_minutes", 30)
+    if retry_delay_minutes < 0:
+        raise ValueError(f"retry_delay_minutes cannot be negative, got {retry_delay_minutes}")
+
     return SchedulerConfig(
         enabled=scheduler_data.get("enabled", False),
-        interval_hours=scheduler_data.get("interval_hours", 24),
+        interval_hours=interval_hours,
         run_on_startup=scheduler_data.get("run_on_startup", True),
         retry_on_failure=scheduler_data.get("retry_on_failure", True),
-        retry_delay_minutes=scheduler_data.get("retry_delay_minutes", 30),
+        retry_delay_minutes=retry_delay_minutes,
     )
 
 
@@ -582,6 +641,7 @@ def load_config() -> Config:
         parallel=_parse_parallel_config(data),
         retry=_parse_retry_config(data),
         throttling=_parse_throttling_config(data),
+        post_filter=_parse_post_filter_config(data),
         logging=_parse_logging_config(data),
         output=_parse_output_config(data),
         profile=_parse_profile_config(data),
@@ -597,30 +657,35 @@ def load_config() -> Config:
     return config
 
 
-# Singleton instance for easy access
+# Singleton instance for easy access with thread-safe locking
 _config: Config | None = None
+_config_lock = threading.Lock()
 
 
 def get_config() -> Config:
     """
-    Get configuration singleton.
+    Get configuration singleton (thread-safe).
 
     Returns:
         Config object with all settings.
     """
     global _config
     if _config is None:
-        _config = load_config()
+        with _config_lock:
+            # Double-check pattern to avoid multiple loads
+            if _config is None:
+                _config = load_config()
     return _config
 
 
 def reload_config() -> Config:
     """
-    Force reload configuration from file.
+    Force reload configuration from file (thread-safe).
 
     Returns:
         Fresh Config object.
     """
     global _config
-    _config = load_config()
+    with _config_lock:
+        _config = load_config()
     return _config

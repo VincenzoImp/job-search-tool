@@ -12,6 +12,7 @@ The tool is **highly customizable** through YAML configuration - no code changes
 - **Telegram Notifications**: Receive alerts when new relevant jobs are found
 - **Parallel Execution**: Fast searches using ThreadPoolExecutor
 - **Rate Limit Prevention**: Configurable throttling with per-site delays and jitter
+- **Fuzzy Post-Filtering**: Validate results match query terms with typo tolerance
 - **Smart Deduplication**: Track jobs across runs, identify new vs. seen jobs
 - **Relevance Scoring**: Customizable keyword-based scoring system
 - **Interactive Dashboard**: Streamlit UI for exploring and filtering results
@@ -30,6 +31,7 @@ The tool is **highly customizable** through YAML configuration - no code changes
 - **APScheduler**: Automated periodic execution
 - **python-telegram-bot**: Telegram notification integration
 - **Jinja2**: Template engine for notification formatting
+- **rapidfuzz**: Fuzzy string matching for post-filtering
 - **SQLite**: Job persistence and tracking across runs
 - **Docker**: Containerized environment for cross-platform compatibility
 
@@ -79,6 +81,7 @@ Central configuration file containing all customizable settings with extensive d
 - **parallel**: max_workers for concurrent execution
 - **retry**: max_attempts, base_delay, backoff_factor
 - **throttling**: enabled, default_delay, site_delays, jitter, rate_limit_cooldown
+- **post_filter**: enabled, min_similarity, check_query_terms, check_location
 - **logging**: level, file path, rotation settings
 - **output**: results_dir, data_dir, database_file, save_csv, save_excel
 - **profile**: User information for display
@@ -97,6 +100,7 @@ Configuration loader with type-safe dataclasses:
 - `ParallelConfig`: Concurrency settings (max_workers)
 - `RetryConfig`: Retry logic parameters
 - `ThrottlingConfig`: Rate limit prevention (default_delay, site_delays, jitter)
+- `PostFilterConfig`: Fuzzy post-filtering (enabled, min_similarity, check_query_terms, check_location)
 - `LoggingConfig`: Logging configuration
 - `OutputConfig`: File paths and output options (save_csv, save_excel)
 - `ProfileConfig`: User profile information
@@ -590,6 +594,26 @@ throttling:
 | 1.5s delay, 4 workers | ~8 min | Moderate risk |
 | 3.0s delay, 2 workers | ~15 min | Low risk |
 
+### Configure Fuzzy Post-Filtering
+
+Post-filtering validates that returned jobs actually match your search query and location. This is important because job boards often return "related" results that don't match the original query. Edit `config/settings.yaml`:
+
+```yaml
+post_filter:
+  enabled: true           # Enable fuzzy post-filtering (recommended)
+  min_similarity: 80      # Similarity threshold 0-100 (80 = allows zürich/zurich)
+  check_query_terms: true # Verify all query words are in job data
+  check_location: true    # Verify location matches (skipped for "Remote")
+```
+
+**How it works:**
+- For query `"python developer"` with location `"Zurich, Switzerland"`:
+  - Job must contain "python" somewhere (title/description/company)
+  - Job must contain "developer" somewhere
+  - Job must contain "zurich" OR "switzerland" in location
+- Uses fuzzy matching: `zürich` ≈ `zurich` ≈ `zuerich` (within 80% similarity)
+- Handles typos: `pythom` ≈ `python`
+
 ### Configure Telegram Notifications
 
 Edit `config/settings.yaml`:
@@ -604,7 +628,7 @@ notifications:
       - "YOUR_CHAT_ID"                 # Your personal chat ID
     send_summary: true                 # Send after each run
     min_score_for_notification: 15     # Only jobs with score >= 15
-    max_jobs_in_message: 10            # Top 10 jobs in message
+    max_jobs_in_message: 50            # Max jobs in message (was hardcoded to 10)
 ```
 
 ### Disable CSV/Excel Output
@@ -898,6 +922,32 @@ MIT License - See LICENSE file for details.
 **Last Updated**: 2025-12-27
 
 ## Changelog
+
+### v2.3.0 (2025-12-28) - Professional Audit & Fixes
+- **CRITICAL FIX**: Scheduler retry time calculation bug (incorrect modulo arithmetic)
+- **CRITICAL FIX**: SQL error handling now only ignores duplicate column errors
+- **HIGH FIX**: Telegram token now supports environment variable (security)
+- **HIGH FIX**: Removed hardcoded personal information from ProfileConfig defaults
+- **HIGH FIX**: SQLite connection properly managed with context manager
+- **HIGH FIX**: Race condition in job deduplication resolved
+- **HIGH FIX**: asyncio.run() now works in async contexts
+- **MEDIUM FIX**: N+1 database query optimized to single batch query
+- **MEDIUM FIX**: Dockerfile gcc removed after build (smaller image)
+- **MEDIUM FIX**: Config singleton now thread-safe with locking
+- **MEDIUM FIX**: Input validation for all config parameters
+- **MEDIUM FIX**: Version upper bounds added to all dependencies
+- **LOW FIX**: Type hints corrected (any → Any)
+- **LOW FIX**: Color codes only applied to TTY output
+- **LOW FIX**: All print() replaced with logger
+- Improved code quality, security, and thread safety throughout
+- See [AUDIT_FIXES.md](AUDIT_FIXES.md) for complete details
+
+### v2.2.0 (2025-12-27)
+- **NEW**: Fuzzy post-filtering to validate results match query terms
+- **NEW**: `PostFilterConfig` with min_similarity, check_query_terms, check_location
+- **NEW**: Added `rapidfuzz` dependency for fuzzy string matching
+- **FIX**: Removed hardcoded 10 job limit in Telegram notifications (now uses config)
+- Handles character variations (ü/u, ö/o) and typos automatically
 
 ### v2.1.0 (2025-12-27)
 - **NEW**: Configurable throttling to prevent rate limiting
