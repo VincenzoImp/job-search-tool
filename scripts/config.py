@@ -205,6 +205,7 @@ class LoggingConfig:
     file: str = "logs/search.log"
     max_size_mb: int = 10
     backup_count: int = 5
+    timezone: str = "UTC"  # Timezone for log timestamps (e.g., "Europe/Zurich", "America/New_York")
 
 
 @dataclass
@@ -390,41 +391,78 @@ def _parse_scoring_config(data: dict[str, Any]) -> ScoringConfig:
 
 
 def _parse_parallel_config(data: dict[str, Any]) -> ParallelConfig:
-    """Parse parallel configuration from dict."""
+    """Parse parallel configuration from dict with validation."""
     parallel_data = data.get("parallel", {})
+
+    max_workers = parallel_data.get("max_workers", 5)
+    if max_workers < 1:
+        raise ValueError(f"max_workers must be at least 1, got {max_workers}")
+
     return ParallelConfig(
-        max_workers=parallel_data.get("max_workers", 5),
+        max_workers=max_workers,
     )
 
 
 def _parse_retry_config(data: dict[str, Any]) -> RetryConfig:
-    """Parse retry configuration from dict."""
+    """Parse retry configuration from dict with validation."""
     retry_data = data.get("retry", {})
+
+    max_attempts = retry_data.get("max_attempts", 3)
+    if max_attempts < 1:
+        raise ValueError(f"max_attempts must be at least 1, got {max_attempts}")
+
+    base_delay = retry_data.get("base_delay", 2.0)
+    if base_delay < 0:
+        raise ValueError(f"base_delay cannot be negative, got {base_delay}")
+
+    backoff_factor = retry_data.get("backoff_factor", 2.0)
+    if backoff_factor < 1.0:
+        raise ValueError(f"backoff_factor must be at least 1.0, got {backoff_factor}")
+
     return RetryConfig(
-        max_attempts=retry_data.get("max_attempts", 3),
-        base_delay=retry_data.get("base_delay", 2.0),
-        backoff_factor=retry_data.get("backoff_factor", 2.0),
+        max_attempts=max_attempts,
+        base_delay=base_delay,
+        backoff_factor=backoff_factor,
     )
 
 
 def _parse_throttling_config(data: dict[str, Any]) -> ThrottlingConfig:
-    """Parse throttling configuration from dict."""
+    """Parse throttling configuration from dict with validation."""
     throttling_data = data.get("throttling", {})
+
+    default_delay = throttling_data.get("default_delay", 1.5)
+    if default_delay < 0:
+        raise ValueError(f"default_delay cannot be negative, got {default_delay}")
+
+    jitter = throttling_data.get("jitter", 0.3)
+    if not 0 <= jitter <= 1.0:
+        raise ValueError(f"jitter must be between 0 and 1.0, got {jitter}")
+
+    rate_limit_cooldown = throttling_data.get("rate_limit_cooldown", 30.0)
+    if rate_limit_cooldown < 0:
+        raise ValueError(f"rate_limit_cooldown cannot be negative, got {rate_limit_cooldown}")
+
+    # Validate site_delays
+    site_delays = throttling_data.get(
+        "site_delays",
+        {
+            "linkedin": 3.0,
+            "indeed": 1.0,
+            "glassdoor": 1.5,
+            "google": 2.0,
+            "ziprecruiter": 1.5,
+        },
+    )
+    for site, delay in site_delays.items():
+        if delay < 0:
+            raise ValueError(f"site_delays[{site}] cannot be negative, got {delay}")
+
     return ThrottlingConfig(
         enabled=throttling_data.get("enabled", True),
-        default_delay=throttling_data.get("default_delay", 1.5),
-        site_delays=throttling_data.get(
-            "site_delays",
-            {
-                "linkedin": 3.0,
-                "indeed": 1.0,
-                "glassdoor": 1.5,
-                "google": 2.0,
-                "ziprecruiter": 1.5,
-            },
-        ),
-        jitter=throttling_data.get("jitter", 0.3),
-        rate_limit_cooldown=throttling_data.get("rate_limit_cooldown", 30.0),
+        default_delay=default_delay,
+        site_delays=site_delays,
+        jitter=jitter,
+        rate_limit_cooldown=rate_limit_cooldown,
     )
 
 
@@ -445,13 +483,23 @@ def _parse_post_filter_config(data: dict[str, Any]) -> PostFilterConfig:
 
 
 def _parse_logging_config(data: dict[str, Any]) -> LoggingConfig:
-    """Parse logging configuration from dict."""
+    """Parse logging configuration from dict with validation."""
     logging_data = data.get("logging", {})
+
+    max_size_mb = logging_data.get("max_size_mb", 10)
+    if max_size_mb <= 0:
+        raise ValueError(f"max_size_mb must be positive, got {max_size_mb}")
+
+    backup_count = logging_data.get("backup_count", 5)
+    if backup_count < 0:
+        raise ValueError(f"backup_count cannot be negative, got {backup_count}")
+
     return LoggingConfig(
         level=logging_data.get("level", "INFO"),
         file=logging_data.get("file", "logs/search.log"),
-        max_size_mb=logging_data.get("max_size_mb", 10),
-        backup_count=logging_data.get("backup_count", 5),
+        max_size_mb=max_size_mb,
+        backup_count=backup_count,
+        timezone=logging_data.get("timezone", "UTC"),
     )
 
 
@@ -509,15 +557,34 @@ def _parse_scheduler_config(data: dict[str, Any]) -> SchedulerConfig:
 
 
 def _parse_telegram_config(data: dict[str, Any]) -> TelegramConfig:
-    """Parse Telegram configuration from dict."""
+    """Parse Telegram configuration from dict with validation."""
     telegram_data = data.get("telegram", {})
+
+    min_score = telegram_data.get("min_score_for_notification", 0)
+    if min_score < 0:
+        raise ValueError(f"min_score_for_notification cannot be negative, got {min_score}")
+
+    max_jobs = telegram_data.get("max_jobs_in_message", 10)
+    if max_jobs < 1:
+        raise ValueError(f"max_jobs_in_message must be at least 1, got {max_jobs}")
+
+    # Validate chat_ids format
+    chat_ids = telegram_data.get("chat_ids", [])
+    validated_chat_ids = []
+    for chat_id in chat_ids:
+        if chat_id:  # Skip empty values
+            # Ensure it's a string (can be numeric string or with - prefix for groups)
+            str_id = str(chat_id).strip()
+            if str_id:
+                validated_chat_ids.append(str_id)
+
     return TelegramConfig(
         enabled=telegram_data.get("enabled", False),
         bot_token=telegram_data.get("bot_token", ""),
-        chat_ids=telegram_data.get("chat_ids", []),
+        chat_ids=validated_chat_ids,
         send_summary=telegram_data.get("send_summary", True),
-        min_score_for_notification=telegram_data.get("min_score_for_notification", 0),
-        max_jobs_in_message=telegram_data.get("max_jobs_in_message", 10),
+        min_score_for_notification=min_score,
+        max_jobs_in_message=max_jobs,
     )
 
 
