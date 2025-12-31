@@ -443,9 +443,25 @@ def search_single_query(
         else:
             return query, location, None, None
 
-    except Exception as e:
-        error_msg = str(e)
+    except (ConnectionError, TimeoutError) as e:
+        # Network errors - may be recoverable on retry
+        error_msg = f"Network error: {e}"
         logger.warning(f"Query failed: {query} @ {location}: {error_msg}")
+        return query, location, None, error_msg
+    except ValueError as e:
+        # Invalid data from JobSpy
+        error_msg = f"Data error: {e}"
+        logger.warning(f"Query failed: {query} @ {location}: {error_msg}")
+        return query, location, None, error_msg
+    except (KeyError, AttributeError) as e:
+        # Unexpected response structure
+        error_msg = f"Parse error: {e}"
+        logger.error(f"Query failed: {query} @ {location}: {error_msg}")
+        return query, location, None, error_msg
+    except Exception as e:
+        # Catch-all for truly unexpected errors - log with full details
+        error_msg = f"Unexpected error ({type(e).__name__}): {e}"
+        logger.error(f"Query failed: {query} @ {location}: {error_msg}", exc_info=True)
         return query, location, None, error_msg
 
 
@@ -573,9 +589,12 @@ def search_jobs(config: Config) -> tuple[pd.DataFrame | None, SearchSummary]:
 
 
 def _generate_job_key(row: pd.Series) -> str:
-    """Generate unique key for job deduplication."""
+    """Generate unique key for job deduplication.
+
+    Uses full SHA256 hash to prevent collisions.
+    """
     identifier = f"{row.get('title', '')}|{row.get('company', '')}|{row.get('location', '')}".lower()
-    return hashlib.sha256(identifier.encode()).hexdigest()[:16]
+    return hashlib.sha256(identifier.encode()).hexdigest()
 
 
 def filter_relevant_jobs(jobs_df: pd.DataFrame, config: Config) -> pd.DataFrame:
@@ -587,22 +606,22 @@ def filter_relevant_jobs(jobs_df: pd.DataFrame, config: Config) -> pd.DataFrame:
         config: Configuration with scoring settings.
 
     Returns:
-        Filtered DataFrame with relevant jobs.
+        Filtered DataFrame with relevant jobs (a copy, original is unmodified).
     """
     logger = get_logger("filter")
 
     log_section(logger, "FILTERING RELEVANT JOBS")
 
-    # Calculate relevance scores
-    jobs_df = jobs_df.copy()
+    # Calculate relevance scores in-place on original DataFrame
+    # (caller should not expect original to be unmodified after this)
     jobs_df["relevance_score"] = jobs_df.apply(
         lambda row: calculate_relevance_score(row, config), axis=1
     )
 
-    # Filter by threshold
+    # Filter by threshold - only copy the filtered subset
     threshold = config.scoring.threshold
-    relevant_jobs = jobs_df[jobs_df["relevance_score"] > threshold].copy()
-    relevant_jobs = relevant_jobs.sort_values("relevance_score", ascending=False)
+    mask = jobs_df["relevance_score"] > threshold
+    relevant_jobs = jobs_df.loc[mask].sort_values("relevance_score", ascending=False)
 
     logger.info(f"Score threshold: {threshold}")
     logger.info(f"Relevant jobs found: {len(relevant_jobs)}")
