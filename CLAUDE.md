@@ -981,6 +981,11 @@ MIT License - See LICENSE file for details.
 
 ## Changelog
 
+### v2.5.1 (2025-12-31) - Docker Build Fix
+
+**FIX:**
+- **Docker Build**: Removed non-existent `templates/` directory reference from Dockerfile that was causing build failures
+
 ### v2.5.0 (2025-12-31) - Stability & Testing Release
 
 **CRITICAL FIXES:**
