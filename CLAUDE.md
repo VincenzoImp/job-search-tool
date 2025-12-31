@@ -53,15 +53,22 @@ job-search-tool/
 │   ├── config.py              # Configuration loader with validation
 │   ├── logger.py              # Structured logging with rotation
 │   ├── database.py            # SQLite persistence for job tracking
-│   └── models.py              # Type-safe dataclasses
-├── templates/                  # Jinja2 templates for notifications
-│   └── telegram_summary.md.j2 # Telegram message template
+│   ├── models.py              # Type-safe dataclasses
+│   └── healthcheck.py         # Docker health check script
+├── tests/                      # Test suite (pytest)
+│   ├── conftest.py            # Pytest configuration
+│   ├── test_models.py         # Tests for data models
+│   ├── test_config.py         # Tests for configuration validation
+│   ├── test_database.py       # Tests for database operations
+│   └── test_scoring.py        # Tests for scoring functions
 ├── results/                    # Generated CSV/Excel files (gitignored)
 ├── data/                       # SQLite database (gitignored)
 ├── logs/                       # Log files with rotation (gitignored)
 ├── Dockerfile                  # Python 3.11 container
 ├── docker-compose.yml          # Service orchestration with profiles
 ├── requirements.txt            # Python dependencies
+├── requirements-dev.txt        # Development dependencies (pytest, mypy, ruff)
+├── pytest.ini                  # Pytest configuration
 ├── .dockerignore               # Docker build optimization
 ├── .gitignore                  # Git exclusions
 ├── LICENSE                     # MIT License
@@ -101,7 +108,7 @@ Configuration loader with type-safe dataclasses:
 - `RetryConfig`: Retry logic parameters
 - `ThrottlingConfig`: Rate limit prevention (default_delay, site_delays, jitter)
 - `PostFilterConfig`: Fuzzy post-filtering (enabled, min_similarity, check_query_terms, check_location)
-- `LoggingConfig`: Logging configuration
+- `LoggingConfig`: Logging configuration (includes timezone setting)
 - `OutputConfig`: File paths and output options (save_csv, save_excel)
 - `ProfileConfig`: User profile information
 - `SchedulerConfig`: Scheduling settings (enabled, interval_hours, etc.)
@@ -142,7 +149,7 @@ Type-safe dataclasses for data structures:
 
 **Key Classes**:
 - `Job`: Single job listing with all fields
-  - `job_id` property: SHA256 hash of title+company+location
+  - `job_id` property: Full 64-character SHA256 hash of title+company+location (collision-resistant)
   - `from_dict()`: Create from DataFrame row
   - `to_dict()`: Convert to dictionary
 - `SearchResult`: Results from a single query
@@ -801,6 +808,35 @@ pip install mypy
 mypy scripts/
 ```
 
+### Running Tests
+
+The project includes a comprehensive test suite using pytest:
+
+```bash
+# Install dev dependencies
+pip install -r requirements-dev.txt
+
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=scripts --cov-report=html
+
+# Run specific test file
+pytest tests/test_models.py
+
+# Run with verbose output
+pytest -v
+```
+
+**Test Coverage:**
+- `test_models.py`: Job ID generation, dataclass conversions, SearchSummary
+- `test_config.py`: All configuration validation (29 tests)
+- `test_database.py`: CRUD operations, deduplication, statistics
+- `test_scoring.py`: Scoring calculation, fuzzy matching (requires rapidfuzz)
+
+**Note:** Some tests require all dependencies installed. In minimal environments, tests that require missing packages will be skipped automatically.
+
 ### Logging Best Practices
 
 - Use `get_logger("module_name")` for module-specific loggers
@@ -945,6 +981,54 @@ MIT License - See LICENSE file for details.
 
 ## Changelog
 
+### v2.5.0 (2025-12-31) - Stability & Testing Release
+
+**CRITICAL FIXES:**
+- **FIX**: Added missing `self.logger` in `database.py` - was causing `AttributeError` on migration failures
+- **FIX**: Fixed async/sync bridge in `notifier.py` - `send_all_sync()` now works correctly in async contexts using ThreadPoolExecutor
+- **FIX**: Increased job ID hash from 16 to 64 characters (full SHA256) - prevents collisions with large job databases
+
+**TIMEZONE:**
+- **FIX**: Removed hardcoded `TZ=Europe/Zurich` from Docker - now uses `logging.timezone` from config (default: UTC)
+- **NEW**: `logging.timezone` configuration option for customizable log timestamps
+
+**VALIDATION:**
+- **NEW**: Comprehensive input validation for all numeric config parameters:
+  - `max_workers >= 1`
+  - `max_attempts >= 1`
+  - `base_delay >= 0`
+  - `backoff_factor >= 1.0`
+  - `jitter` between 0 and 1.0
+  - `site_delays` all >= 0
+  - `max_size_mb > 0`
+  - `backup_count >= 0`
+  - `min_score_for_notification >= 0`
+  - `max_jobs_in_message >= 1`
+- **NEW**: Chat IDs are now validated and normalized to strings
+
+**EXCEPTION HANDLING:**
+- **REFACTOR**: Replaced broad `except Exception` in `search_jobs.py` with specific exceptions:
+  - `ConnectionError`, `TimeoutError` for network issues
+  - `ValueError` for invalid data
+  - `KeyError`, `AttributeError` for parse errors
+  - Catch-all now logs with `exc_info=True` for debugging
+
+**PERFORMANCE:**
+- **PERF**: Removed unnecessary DataFrame copies in `filter_relevant_jobs()` - reduces memory usage
+
+**DOCKER:**
+- **NEW**: Real health check script (`healthcheck.py`) that verifies imports, config, database, and directories
+- **FIX**: Added consistent restart policies across all services
+
+**TESTING:**
+- **NEW**: Comprehensive test suite with 60+ tests:
+  - `tests/test_models.py` - Job ID, dataclass conversions (13 tests)
+  - `tests/test_config.py` - Configuration validation (29 tests)
+  - `tests/test_database.py` - CRUD, deduplication, statistics (18 tests)
+  - `tests/test_scoring.py` - Scoring, fuzzy matching (requires rapidfuzz)
+- **NEW**: `requirements-dev.txt` with pytest, mypy, ruff, black
+- **NEW**: `pytest.ini` configuration file
+
 ### v2.4.0 (2025-12-31) - Generic Scoring System
 - **BREAKING**: Scoring system is now fully config-driven (no hardcoded categories)
 - **REFACTOR**: `calculate_relevance_score()` dynamically iterates over all keyword categories
@@ -999,6 +1083,5 @@ MIT License - See LICENSE file for details.
 - **NEW**: Telegram notifications for new jobs
 - **NEW**: Unified entry point (`main.py`)
 - **NEW**: Report generator for notification formatting
-- **NEW**: Templates directory for Jinja2 templates
 - Updated Docker configuration with scheduler service
 - Backward compatible - existing workflows still work
