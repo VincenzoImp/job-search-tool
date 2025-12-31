@@ -307,84 +307,55 @@ def fuzzy_post_filter(
 
 def calculate_relevance_score(row: pd.Series, config: Config) -> int:
     """
-    Calculate relevance score based on user profile and configuration.
+    Calculate relevance score based entirely on user configuration.
+
+    The scoring system is fully dynamic: it iterates over all keyword categories
+    defined in config.scoring.keywords and applies the corresponding weight from
+    config.scoring.weights. No hardcoded categories or keywords.
 
     Args:
         row: DataFrame row with job data.
         config: Configuration with scoring weights and keywords.
 
     Returns:
-        Relevance score as integer.
+        Relevance score as integer (sum of matched category weights).
+
+    Example config:
+        scoring:
+          weights:
+            primary_skills: 20
+            technologies: 15
+          keywords:
+            primary_skills:
+              - "software engineer"
+              - "backend"
+            technologies:
+              - "python"
+              - "docker"
     """
-    score = 0
+    # Build searchable text from job fields
     text = " ".join(
-        [
-            str(row.get("title", "") or ""),
-            str(row.get("description", "") or ""),
-            str(row.get("company", "") or ""),
-        ]
+        str(row.get(field, "") or "")
+        for field in ("title", "description", "company", "location")
     ).lower()
 
+    if not text.strip():
+        return 0
+
+    score = 0
     weights = config.scoring.weights
     keywords = config.scoring.keywords
 
-    # Blockchain & Distributed Systems
-    if any(kw in text for kw in keywords.get("blockchain", [])):
-        score += weights.get("blockchain", 20)
+    # Iterate over all keyword categories defined in configuration
+    for category, keyword_list in keywords.items():
+        if not keyword_list:
+            continue
 
-    # PhD/Research positions
-    if any(kw in text for kw in keywords.get("phd", [])):
-        score += weights.get("phd_research", 18)
-
-    # Data analysis & user behavior
-    if any(kw in text for kw in keywords.get("data", [])):
-        score += weights.get("data_analysis", 15)
-
-    # Security & Privacy
-    if any(kw in text for kw in keywords.get("security", [])):
-        score += weights.get("security", 12)
-
-    # Social network analysis
-    if any(kw in text for kw in keywords.get("social", [])):
-        score += weights.get("social_network", 10)
-
-    # Technical skills
-    if any(kw in text for kw in keywords.get("tech", [])):
-        score += weights.get("tech_skills", 8)
-
-    # Summer programs
-    if any(kw in text for kw in keywords.get("summer", [])):
-        score += weights.get("summer_programs", 15)
-
-    # Academic institutions
-    if any(kw in text for kw in keywords.get("academic", [])):
-        score += weights.get("academic", 12)
-
-    # Open source
-    if "open source" in text or "opensource" in text:
-        score += weights.get("open_source", 8)
-
-    # Hackathon/competition
-    if "hackathon" in text or "competition" in text:
-        score += weights.get("hackathon", 5)
-
-    # Teaching
-    if "teaching" in text or "lecturer" in text:
-        score += weights.get("teaching", 6)
-
-    # Computer Science
-    if "computer science" in text:
-        score += weights.get("computer_science", 5)
-
-    # Location bonuses
-    if "zurich" in text or "zürich" in text:
-        score += weights.get("location_bonus", 5)
-    elif "lausanne" in text or "epfl" in text:
-        score += weights.get("location_bonus", 5)
-
-    # ETH Zurich specific bonus
-    if "eth zurich" in text or "eth zürich" in text:
-        score += weights.get("eth_zurich", 10)
+        # Check if any keyword from this category matches
+        if any(keyword.lower() in text for keyword in keyword_list):
+            # Get weight for this category (default 0 if not specified)
+            weight = weights.get(category, 0)
+            score += weight
 
     return score
 
@@ -732,8 +703,12 @@ def save_results(
                     )
                     for row_num in range(2, len(jobs_df) + 2):
                         cell = worksheet.cell(row=row_num, column=score_col)
-                        if cell.value and int(cell.value) >= 30:
-                            cell.fill = high_score_fill
+                        try:
+                            if cell.value is not None and float(cell.value) >= 30:
+                                cell.fill = high_score_fill
+                        except (ValueError, TypeError):
+                            # Skip cells with non-numeric values
+                            pass
 
             logger.info(f"Saved Excel: {excel_file}")
             excel_path = str(excel_file)
@@ -745,19 +720,34 @@ def save_results(
 
 
 def print_banner(config: Config) -> None:
-    """Print application banner with profile info."""
+    """Print application banner with profile info using logger."""
+    logger = get_logger("banner")
     profile = config.profile
-    banner = f"""
-    ╔══════════════════════════════════════════════════════════════════════╗
-    ║             Job Search Tool - {profile.name:<33} ║
-    ║                                                                      ║
-    ║  Profile:                                                            ║
-    ║  • {profile.current_position:<65} ║
-    ║  • Skills: {profile.skills:<56} ║
-    ║  • Target: {profile.target:<56} ║
-    ╚══════════════════════════════════════════════════════════════════════╝
-    """
-    print(banner)
+
+    # Truncate long strings to fit banner width
+    def truncate(text: str, max_len: int) -> str:
+        return text[:max_len] if len(text) <= max_len else text[: max_len - 3] + "..."
+
+    name = truncate(profile.name, 33)
+    position = truncate(profile.current_position, 65)
+    skills = truncate(profile.skills, 56)
+    target = truncate(profile.target, 56)
+
+    banner_lines = [
+        "",
+        "╔══════════════════════════════════════════════════════════════════════╗",
+        f"║             Job Search Tool - {name:<33} ║",
+        "║                                                                      ║",
+        "║  Profile:                                                            ║",
+        f"║  • {position:<65} ║",
+        f"║  • Skills: {skills:<56} ║",
+        f"║  • Target: {target:<56} ║",
+        "╚══════════════════════════════════════════════════════════════════════╝",
+        "",
+    ]
+
+    for line in banner_lines:
+        logger.info(line)
 
 
 def print_top_jobs(jobs_df: pd.DataFrame, count: int = 10) -> None:

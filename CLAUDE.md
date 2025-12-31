@@ -515,18 +515,40 @@ No code changes required!
 
 ### Adjust Relevance Scoring
 
-Edit `config/settings.yaml`:
+The scoring system is **fully dynamic**: it iterates over all keyword categories you define and applies the corresponding weight. No code changes needed - just edit `config/settings.yaml`:
 
 ```yaml
 scoring:
-  threshold: 15  # Increase for stricter filtering
+  threshold: 15  # Minimum score to be "relevant"
+
+  # Define your own categories - names must match between weights and keywords
   weights:
-    primary_skills: 25  # Increase priority
-    teaching: 0         # Disable category
+    primary_skills: 25      # High priority
+    technologies: 15        # Medium priority
+    nice_to_have: 5         # Low priority
+    avoid: 0                # Category exists but adds no points
+
+  # Keywords for each category (searched case-insensitive)
   keywords:
     primary_skills:
-      - "newkeyword"    # Add new keyword
+      - "software engineer"
+      - "backend developer"
+    technologies:
+      - "python"
+      - "docker"
+      - "kubernetes"
+    nice_to_have:
+      - "remote"
+      - "startup"
 ```
+
+**How it works:**
+1. For each job, builds searchable text from: title + description + company + location
+2. For each category in `keywords`, checks if ANY keyword matches
+3. If matched, adds the category's weight from `weights`
+4. Total score determines if job is "relevant" (score >= threshold)
+
+**IMPORTANT**: Category names in `weights` must match those in `keywords`. If a category has no weight defined, it defaults to 0.
 
 ### Change Search Parameters
 
@@ -919,9 +941,23 @@ MIT License - See LICENSE file for details.
 
 ---
 
-**Last Updated**: 2025-12-27
+**Last Updated**: 2025-12-31
 
 ## Changelog
+
+### v2.4.0 (2025-12-31) - Generic Scoring System
+- **BREAKING**: Scoring system is now fully config-driven (no hardcoded categories)
+- **REFACTOR**: `calculate_relevance_score()` dynamically iterates over all keyword categories
+- **REFACTOR**: Removed all hardcoded keywords (open source, hackathon, teaching, etc.)
+- **REFACTOR**: Removed all hardcoded location bonuses (zurich, lausanne, eth, epfl)
+- **REFACTOR**: Default scoring categories are now generic (primary_skills, technologies, etc.)
+- **REFACTOR**: Default queries are now generic software engineering roles
+- **FIX**: Scheduler `self._logger` typo causing silent failure on retry
+- **FIX**: Excel cell type conversion now handles float/string values safely
+- **FIX**: Banner now uses logger instead of print() for consistency
+- **FIX**: Banner text truncation prevents formatting issues with long strings
+- **DOCS**: Updated settings.example.yaml with clear instructions on category matching
+- The tool is now fully generic and works for any user with their own settings.yaml
 
 ### v2.3.0 (2025-12-28) - Professional Audit & Fixes
 - **CRITICAL FIX**: Scheduler retry time calculation bug (incorrect modulo arithmetic)

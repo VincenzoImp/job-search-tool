@@ -65,107 +65,79 @@ class SearchConfig:
 
 @dataclass
 class ScoringConfig:
-    """Relevance scoring configuration."""
+    """Relevance scoring configuration.
+
+    The scoring system is fully dynamic: it iterates over all keyword categories
+    and applies the corresponding weight when a match is found.
+
+    Users should define their own categories in settings.yaml. The defaults here
+    are generic examples that work for typical software engineering searches.
+    """
 
     threshold: int = 10
     weights: dict[str, int] = field(
         default_factory=lambda: {
-            "blockchain": 20,
-            "phd_research": 18,
-            "data_analysis": 15,
-            "summer_programs": 15,
-            "security": 12,
-            "academic": 12,
-            "eth_zurich": 10,
-            "social_network": 10,
-            "tech_skills": 8,
-            "open_source": 8,
-            "teaching": 6,
-            "computer_science": 5,
-            "location_bonus": 5,
-            "hackathon": 5,
+            "primary_skills": 20,
+            "secondary_skills": 15,
+            "technologies": 12,
+            "seniority": 10,
+            "company_type": 8,
+            "remote": 5,
+            "locations": 5,
         }
     )
     keywords: dict[str, list[str]] = field(
         default_factory=lambda: {
-            "phd": [
-                "phd",
-                "doctoral",
-                "research",
-                "postdoc",
-                "scientist",
-                "researcher",
-                "visiting",
-                "academic",
+            "primary_skills": [
+                "software engineer",
+                "backend",
+                "full-stack",
+                "fullstack",
+                "developer",
+                "programmer",
             ],
-            "blockchain": [
-                "blockchain",
-                "crypto",
-                "distributed",
-                "web3",
-                "ethereum",
-                "bitcoin",
-                "smart contract",
-                "defi",
-                "consensus",
-                "nostr",
-                "decentralized",
-                "peer-to-peer",
-                "p2p",
-            ],
-            "data": [
+            "secondary_skills": [
                 "data",
-                "analysis",
-                "analytics",
-                "behavior",
-                "behavioral",
-                "network analysis",
-                "visualization",
-                "mining",
-                "transaction",
-                "pattern",
-                "graph",
-                "user behavior",
+                "cloud",
+                "devops",
+                "api",
+                "microservices",
             ],
-            "security": [
-                "security",
-                "privacy",
-                "cryptography",
-                "encryption",
-                "zero-knowledge",
-                "zk",
-                "homomorphic",
-                "usenix",
-            ],
-            "social": [
-                "social network",
-                "telegram",
-                "community",
-                "user engagement",
-                "monetization",
-                "social media",
-            ],
-            "tech": [
+            "technologies": [
                 "python",
-                "typescript",
                 "javascript",
+                "typescript",
                 "react",
                 "node.js",
+                "nodejs",
                 "postgresql",
-                "mongodb",
                 "docker",
-                "c++",
-                "solidity",
+                "kubernetes",
+                "aws",
+                "gcp",
+                "azure",
             ],
-            "summer": ["summer", "2026", "intern", "temporary", "short-term"],
-            "academic": [
-                "eth zurich",
-                "epfl",
-                "university",
-                "institute",
-                "academia",
-                "sapienza",
+            "seniority": [
+                "senior",
+                "staff",
+                "lead",
+                "principal",
+                "architect",
             ],
+            "company_type": [
+                "startup",
+                "tech",
+                "fintech",
+                "saas",
+            ],
+            "remote": [
+                "remote",
+                "work from home",
+                "wfh",
+                "distributed",
+                "hybrid",
+            ],
+            "locations": [],  # User should customize in settings.yaml
         }
     )
 
@@ -559,67 +531,50 @@ def _parse_notifications_config(data: dict[str, Any]) -> NotificationsConfig:
 
 
 def _parse_queries(data: dict[str, Any]) -> dict[str, list[str]]:
-    """Parse search queries from dict."""
+    """Parse search queries from dict.
+
+    If no queries are provided in the configuration, returns generic defaults
+    suitable for typical software engineering job searches.
+    """
     queries_data = data.get("queries", {})
     if not queries_data:
-        # Default queries if none provided
+        # Generic default queries for software engineering roles
         return {
-            "core_research": [
-                "distributed systems researcher",
-                "blockchain researcher",
-                "network analysis",
-                "social network analysis",
-                "user behavior analysis",
+            "software_engineering": [
+                "software engineer",
+                "backend engineer",
+                "frontend developer",
+                "full-stack developer",
+                "software developer",
             ],
-            "blockchain_web3": [
-                "blockchain engineer",
-                "web3 developer",
-                "smart contracts",
-                "cryptocurrency",
-                "Nostr protocol",
-                "decentralized systems",
+            "devops": [
+                "devops engineer",
+                "site reliability engineer",
+                "cloud engineer",
+                "platform engineer",
+                "infrastructure engineer",
             ],
-            "phd_research": [
-                "PhD researcher computer science",
-                "postdoc distributed systems",
-                "research scientist blockchain",
-                "visiting researcher",
-            ],
-            "data_science": [
+            "data": [
+                "data engineer",
                 "data scientist",
                 "data analyst",
-                "data engineer",
-                "behavioral analytics",
-                "network data analysis",
-            ],
-            "software_engineering": [
-                "backend engineer Python",
-                "full-stack TypeScript",
-                "software engineer blockchain",
-                "open source developer",
-            ],
-            "security_privacy": [
-                "security researcher",
-                "privacy engineer",
-                "cryptography",
-                "zero knowledge proofs",
-            ],
-            "academic_teaching": [
-                "teaching assistant computer science",
-                "university lecturer",
-                "research associate",
+                "machine learning engineer",
             ],
             "technologies": [
                 "Python developer",
+                "JavaScript developer",
                 "React developer",
-                "Node.js",
-                "PostgreSQL",
-                "Docker",
+                "Node.js developer",
             ],
-            "summer_temporary": [
-                "summer internship 2026",
-                "research internship",
-                "temporary researcher",
+            "senior": [
+                "senior software engineer",
+                "staff engineer",
+                "tech lead",
+            ],
+            "entry_level": [
+                "junior developer",
+                "software engineer intern",
+                "new grad software engineer",
             ],
         }
     return queries_data
