@@ -981,7 +981,7 @@ MIT License - See LICENSE file for details.
 
 ## Changelog
 
-### v2.5.2 (2026-01-01) - Score Recalculation on Startup
+### v2.5.3 (2026-01-01) - Score Recalculation on Startup
 
 **NEW:**
 - **Score Recalculation**: All existing jobs in the database now have their relevance scores recalculated on startup using the current scoring configuration
@@ -992,6 +992,11 @@ MIT License - See LICENSE file for details.
 - Modify `settings.yaml` scoring weights/keywords
 - Run `docker compose up` (no rebuild needed - config is mounted as volume)
 - All existing jobs are rescored with the new criteria before the search begins
+
+### v2.5.2 (2025-12-31) - Telegram URL Fix
+
+**FIX:**
+- **Telegram MarkdownV2**: Fixed URL escaping in Telegram notifications - URLs with special characters now display correctly
 
 ### v2.5.1 (2025-12-31) - Docker Build Fix
 
