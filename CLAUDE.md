@@ -775,10 +775,14 @@ columns = [
 - Database cleanup feature (`database.cleanup_enabled`, `database.cleanup_days`)
 - Score recalculation moved to startup only (not every iteration)
 
+**Documentation:**
+- Complete rewrite of README.md, CLAUDE.md, CONTRIBUTING.md
+- Added ASCII architecture diagrams
+
 **Performance:**
 - Reduced unnecessary database operations during scheduled runs
 
-### v2.5.3 (2026-01-01)
+### v2.5.3 (2025-12-31)
 
 **Features:**
 - Score recalculation on startup for existing jobs
