@@ -1,289 +1,291 @@
-# CLAUDE.md - Job Search Tool
+# CLAUDE.md - Developer Documentation
+
+> **Purpose**: This document provides comprehensive technical documentation for developers working on the Job Search Tool codebase. It covers architecture, implementation details, API references, and development guidelines.
+
+---
+
+## Table of Contents
+
+- [Project Overview](#project-overview)
+- [Architecture](#architecture)
+- [Core Components](#core-components)
+- [Module Reference](#module-reference)
+- [Database Schema](#database-schema)
+- [Configuration System](#configuration-system)
+- [Execution Flow](#execution-flow)
+- [Development Guide](#development-guide)
+- [Testing](#testing)
+- [Performance Optimization](#performance-optimization)
+- [External Dependencies](#external-dependencies)
+- [Changelog](#changelog)
+
+---
 
 ## Project Overview
 
-This is an automated job search and analysis tool powered by the JobSpy library to aggregate positions from multiple job boards. It features parallel execution, relevance scoring, SQLite persistence, an interactive Streamlit dashboard, **automated scheduling**, and **Telegram notifications**.
+The Job Search Tool is an automated job aggregation platform built on the [JobSpy](https://github.com/speedyapply/JobSpy) library. It provides:
 
-The tool is **highly customizable** through YAML configuration - no code changes needed to customize for different profiles, locations, or job types.
+- **Multi-source scraping** from LinkedIn, Indeed, Glassdoor, and other job boards
+- **Intelligent relevance scoring** with configurable keyword matching
+- **Persistent storage** via SQLite for cross-run job tracking
+- **Scheduled automation** using APScheduler
+- **Real-time notifications** through Telegram
+- **Interactive analysis** via Streamlit dashboard
 
-### Key Features
+### Design Philosophy
 
-- **Automated Scheduling**: Run searches automatically at configurable intervals (default: 24 hours)
-- **Telegram Notifications**: Receive alerts when new relevant jobs are found
-- **Parallel Execution**: Fast searches using ThreadPoolExecutor
-- **Rate Limit Prevention**: Configurable throttling with per-site delays and jitter
-- **Fuzzy Post-Filtering**: Validate results match query terms with typo tolerance
-- **Smart Deduplication**: Track jobs across runs, identify new vs. seen jobs
-- **Relevance Scoring**: Customizable keyword-based scoring system
-- **Interactive Dashboard**: Streamlit UI for exploring and filtering results
+1. **Configuration-Driven**: All behavior is controlled via YAML configuration
+2. **No Hardcoded Values**: Categories, keywords, and scoring are fully dynamic
+3. **Separation of Concerns**: Each module has a single responsibility
+4. **Type Safety**: Comprehensive type hints throughout the codebase
+5. **Graceful Degradation**: Handles rate limits and failures without crashing
+
+---
 
 ## Architecture
 
 ### Technology Stack
 
-- **Python 3.11**: Core language (3.10+ required by JobSpy library)
-- **JobSpy v1.1.82**: Web scraping library for job sites (LinkedIn, Indeed, Glassdoor, Google Jobs, etc.)
-- **Pandas**: Data manipulation and analysis
-- **OpenPyXL**: Excel file generation with formatting
-- **Streamlit**: Interactive dashboard with caching
-- **PyYAML**: YAML configuration parsing
-- **Tenacity**: Retry logic with exponential backoff
-- **APScheduler**: Automated periodic execution
-- **python-telegram-bot**: Telegram notification integration
-- **Jinja2**: Template engine for notification formatting
-- **rapidfuzz**: Fuzzy string matching for post-filtering
-- **SQLite**: Job persistence and tracking across runs
-- **Docker**: Containerized environment for cross-platform compatibility
+| Component | Technology | Purpose |
+|-----------|------------|---------|
+| Language | Python 3.11+ | Core runtime (3.10+ required by JobSpy) |
+| Scraping | JobSpy v1.1.82 | Multi-site job board aggregation |
+| Data | Pandas 2.x | DataFrame manipulation and analysis |
+| Database | SQLite 3 | Persistent job storage |
+| Scheduling | APScheduler 3.x | Periodic task execution |
+| Notifications | python-telegram-bot | Telegram message delivery |
+| Dashboard | Streamlit | Interactive web UI |
+| Configuration | PyYAML | Settings file parsing |
+| Retry Logic | Tenacity | Exponential backoff |
+| Fuzzy Matching | rapidfuzz | Post-filter validation |
+| Excel Output | OpenPyXL | Formatted spreadsheet generation |
 
 ### Project Structure
 
 ```
 job-search-tool/
 ├── config/
-│   ├── settings.yaml          # User configuration (gitignored)
-│   └── settings.example.yaml  # Example template with full documentation
+│   ├── settings.yaml              # User configuration (gitignored)
+│   └── settings.example.yaml      # Template with documentation
+│
 ├── scripts/
-│   ├── main.py                # Unified entry point (scheduler + notifications)
-│   ├── search_jobs.py         # Core job search with parallel execution
-│   ├── scheduler.py           # APScheduler integration for periodic runs
-│   ├── notifier.py            # Telegram notification system
-│   ├── report_generator.py    # Report formatting for notifications
-│   ├── analyze_jobs.py        # Post-search analysis and reporting
-│   ├── dashboard.py           # Streamlit interactive dashboard
-│   ├── config.py              # Configuration loader with validation
-│   ├── logger.py              # Structured logging with rotation
-│   ├── database.py            # SQLite persistence for job tracking
-│   ├── models.py              # Type-safe dataclasses
-│   └── healthcheck.py         # Docker health check script
-├── tests/                      # Test suite (pytest)
-│   ├── conftest.py            # Pytest configuration
-│   ├── test_models.py         # Tests for data models
-│   ├── test_config.py         # Tests for configuration validation
-│   ├── test_database.py       # Tests for database operations
-│   └── test_scoring.py        # Tests for scoring functions
-├── results/                    # Generated CSV/Excel files (gitignored)
-├── data/                       # SQLite database (gitignored)
-├── logs/                       # Log files with rotation (gitignored)
-├── Dockerfile                  # Python 3.11 container
-├── docker-compose.yml          # Service orchestration with profiles
-├── requirements.txt            # Python dependencies
-├── requirements-dev.txt        # Development dependencies (pytest, mypy, ruff)
-├── pytest.ini                  # Pytest configuration
-├── .dockerignore               # Docker build optimization
-├── .gitignore                  # Git exclusions
-├── LICENSE                     # MIT License
-├── README.md                   # User documentation
-└── CLAUDE.md                   # Developer documentation (this file)
+│   ├── main.py                    # Unified entry point
+│   ├── search_jobs.py             # Core search engine
+│   ├── scheduler.py               # APScheduler wrapper
+│   ├── notifier.py                # Notification channels
+│   ├── report_generator.py        # Report formatting
+│   ├── analyze_jobs.py            # Analysis utilities
+│   ├── dashboard.py               # Streamlit application
+│   ├── config.py                  # Configuration loader
+│   ├── database.py                # SQLite operations
+│   ├── models.py                  # Data structures
+│   ├── logger.py                  # Logging setup
+│   └── healthcheck.py             # Docker health verification
+│
+├── tests/
+│   ├── conftest.py                # Pytest fixtures
+│   ├── test_models.py             # Model tests
+│   ├── test_config.py             # Configuration tests
+│   ├── test_database.py           # Database tests
+│   └── test_scoring.py            # Scoring tests
+│
+├── results/                        # CSV/Excel output (gitignored)
+├── data/                           # SQLite database (gitignored)
+├── logs/                           # Log files (gitignored)
+│
+├── Dockerfile                      # Container definition
+├── docker-compose.yml              # Service orchestration
+├── requirements.txt                # Production dependencies
+├── requirements-dev.txt            # Development dependencies
+└── pytest.ini                      # Test configuration
 ```
+
+---
 
 ## Core Components
 
-### 1. config/settings.yaml
+### 1. Entry Point (`main.py`)
 
-Central configuration file containing all customizable settings with extensive documentation:
+The unified entry point that orchestrates the entire application.
 
-- **search**: results_wanted, hours_old, job_types, sites, locations, distance, is_remote, etc.
-- **queries**: Organized by category (software_engineering, data, etc.)
-- **scoring**: threshold, weights, keywords for relevance calculation
-- **parallel**: max_workers for concurrent execution
-- **retry**: max_attempts, base_delay, backoff_factor
-- **throttling**: enabled, default_delay, site_delays, jitter, rate_limit_cooldown
-- **post_filter**: enabled, min_similarity, check_query_terms, check_location
-- **logging**: level, file path, rotation settings
-- **output**: results_dir, data_dir, database_file, save_csv, save_excel
-- **profile**: User information for display
-- **scheduler**: enabled, interval_hours, run_on_startup, retry settings
-- **notifications**: enabled, telegram configuration
+**Key Functions:**
 
-See `config/settings.example.yaml` for full parameter documentation.
+```python
+def run_job_search() -> bool:
+    """
+    Execute a single search iteration.
 
-### 2. scripts/config.py
+    Flow:
+    1. Reload configuration (picks up any changes)
+    2. Initialize database connection
+    3. Cleanup old jobs (if enabled)
+    4. Execute parallel search via search_jobs()
+    5. Filter by relevance threshold
+    6. Save to database
+    7. Send notifications for new jobs
 
-Configuration loader with type-safe dataclasses:
+    Returns:
+        True if successful, False on error.
+    """
 
-**Key Classes**:
-- `SearchConfig`: Search parameters (results_wanted, hours_old, etc.)
-- `ScoringConfig`: Relevance scoring weights and keywords
-- `ParallelConfig`: Concurrency settings (max_workers)
-- `RetryConfig`: Retry logic parameters
-- `ThrottlingConfig`: Rate limit prevention (default_delay, site_delays, jitter)
-- `PostFilterConfig`: Fuzzy post-filtering (enabled, min_similarity, check_query_terms, check_location)
-- `LoggingConfig`: Logging configuration (includes timezone setting)
-- `OutputConfig`: File paths and output options (save_csv, save_excel)
-- `ProfileConfig`: User profile information
-- `SchedulerConfig`: Scheduling settings (enabled, interval_hours, etc.)
-- `TelegramConfig`: Telegram bot settings (bot_token, chat_ids, etc.)
-- `NotificationsConfig`: Notification channel settings
-- `Config`: Main configuration class combining all above
+def main() -> int:
+    """
+    Application entry point.
 
-**Key Functions**:
-- `load_config()`: Load from YAML with fallback to defaults
-- `get_config()`: Get singleton configuration instance
-- `reload_config()`: Force reload from file
+    - Determines execution mode (single-shot vs scheduled)
+    - Recalculates scores for existing jobs (once at startup)
+    - Creates and starts scheduler
 
-**Properties**:
-- `config.results_path`: Absolute path to results directory
-- `config.data_path`: Absolute path to data directory
-- `config.database_path`: Absolute path to SQLite database
-- `config.log_path`: Absolute path to log file
-- `config.get_all_queries()`: Flattened list of all search queries
-
-### 3. scripts/logger.py
-
-Structured logging with console colors and file rotation:
-
-**Key Components**:
-- `ColoredFormatter`: ANSI colors for console output
-- `PlainFormatter`: Plain text for file output
-- `ProgressLogger`: Track progress with counts and percentages
-
-**Key Functions**:
-- `setup_logging(config)`: Initialize logging handlers
-- `get_logger(name)`: Get logger instance
-- `log_section(logger, title)`: Log section header
-- `log_subsection(logger, title)`: Log subsection header
-
-### 4. scripts/models.py
-
-Type-safe dataclasses for data structures:
-
-**Key Classes**:
-- `Job`: Single job listing with all fields
-  - `job_id` property: Full 64-character SHA256 hash of title+company+location (collision-resistant)
-  - `from_dict()`: Create from DataFrame row
-  - `to_dict()`: Convert to dictionary
-- `SearchResult`: Results from a single query
-- `SearchSummary`: Statistics for complete search run
-- `JobDBRecord`: Database record for persistence (with all columns)
-
-### 5. scripts/database.py
-
-SQLite database for job persistence with full job details:
-
-**Schema** (updated with all columns):
-```sql
-CREATE TABLE jobs (
-    job_id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    company TEXT NOT NULL,
-    location TEXT NOT NULL,
-    job_url TEXT,
-    site TEXT,
-    job_type TEXT,
-    is_remote BOOLEAN,
-    job_level TEXT,
-    description TEXT,
-    date_posted DATE,
-    min_amount REAL,
-    max_amount REAL,
-    currency TEXT,
-    company_url TEXT,
-    first_seen DATE NOT NULL,
-    last_seen DATE NOT NULL,
-    relevance_score INTEGER DEFAULT 0,
-    applied BOOLEAN DEFAULT FALSE
-)
+    Returns:
+        Exit code (0 = success, 1 = failure).
+    """
 ```
 
-**Automatic Migration**: When opening an existing database, new columns are automatically added using `ALTER TABLE` statements.
+**Execution Modes:**
 
-**Key Methods**:
-- `save_job(job, site, job_level, company_url)`: Insert or update job with full details
-- `save_jobs_from_dataframe(df)`: Save from DataFrame with all columns
-- `get_new_job_ids(job_ids)`: Identify which jobs are new
-- `filter_new_jobs(df)`: Filter DataFrame to only new jobs
-- `get_all_jobs()`: Get all jobs from database
-- `mark_as_applied(job_id)`: Mark job as applied
-- `get_statistics()`: Get database statistics
-- `export_to_dataframe()`: Export all jobs with full details
+| Mode | Trigger | Behavior |
+|------|---------|----------|
+| Single-shot | `scheduler.enabled: false` | Runs once and exits |
+| Scheduled | `scheduler.enabled: true` | Runs continuously at interval |
 
-**Update Logic**: On conflict (same job_id), updates:
-- `last_seen` to today
-- `relevance_score` only if new score is higher
-- All other fields use COALESCE (keep existing if new is NULL)
+### 2. Search Engine (`search_jobs.py`)
 
-### 6. scripts/search_jobs.py
+The core search implementation with parallel execution and throttling.
 
-Main job search with parallel execution and throttling:
+**Key Classes:**
 
-**Key Classes**:
+```python
+class ThrottledExecutor:
+    """
+    ThreadPoolExecutor wrapper with rate limiting.
 
-- `ThrottledExecutor`: ThreadPoolExecutor wrapper with rate limiting
-  - Per-site delays with configurable jitter
-  - Thread-safe locking for concurrent access
-  - `throttled_search()`: Execute search with delay enforcement
+    Attributes:
+        _delays: dict[str, float]  # Per-site delay configuration
+        _jitter: float             # Random variation factor
+        _locks: dict[str, Lock]    # Per-site thread locks
 
-**Key Functions**:
+    Methods:
+        throttled_search(query, location, site, config) -> DataFrame
+    """
+```
 
-- `calculate_relevance_score(row, config)`: Calculate score based on keywords
-  - Uses weights and keywords from config
-  - Returns integer score
+**Key Functions:**
 
-- `search_single_query(query, location, config)`: Execute one search
-  - Retry logic with exponential backoff via tenacity
-  - Returns (query, location, df, error)
+```python
+def calculate_relevance_score(row: pd.Series, config: Config) -> int:
+    """
+    Calculate job relevance score.
 
-- `search_jobs(config)`: Main parallel search with throttling
-  - Uses ThreadPoolExecutor with ThrottledExecutor
-  - Logs throttling status and estimated time
-  - Incremental deduplication during collection
-  - Returns (combined_df, SearchSummary)
+    Algorithm:
+    1. Build searchable text: title + description + company + location
+    2. For each category in config.scoring.keywords:
+       - If ANY keyword matches (case-insensitive): add weight
+    3. Return total score
 
-- `filter_relevant_jobs(df, config)`: Filter by score threshold
-  - Calculates scores for all jobs
-  - Returns filtered, sorted DataFrame
+    Args:
+        row: DataFrame row with job data.
+        config: Configuration with scoring settings.
 
-- `save_results(df, config, prefix)`: Save to CSV and Excel
-  - Excel formatting: colored headers, hyperlinks, freeze panes
-  - Conditional formatting for high scores
+    Returns:
+        Integer score (can be negative if 'avoid' categories match).
+    """
 
-- `main()`: Legacy entry point (use main.py instead)
-  - Loads config, sets up logging
-  - Runs search, saves results
-  - Updates database with full job details, prints summary
+def search_jobs(config: Config) -> tuple[pd.DataFrame | None, SearchSummary]:
+    """
+    Execute parallel job search across all sites and locations.
 
-### 7. scripts/main.py (NEW - Unified Entry Point)
+    Features:
+    - Parallel query execution via ThreadPoolExecutor
+    - Per-site throttling with jitter
+    - Incremental deduplication during collection
+    - Retry logic with exponential backoff
 
-Main entry point that integrates scheduling and notifications:
+    Returns:
+        Tuple of (combined DataFrame, SearchSummary).
+    """
 
-**Key Functions**:
-- `run_job_search()`: Execute single search iteration with notifications
-- `main()`: Entry point that handles both single-shot and scheduled modes
+def filter_relevant_jobs(df: pd.DataFrame, config: Config) -> pd.DataFrame:
+    """
+    Filter jobs by relevance score threshold.
 
-**Execution Flow**:
-1. Load configuration
-2. Determine mode (single-shot vs scheduled)
-3. If scheduled: start APScheduler with configured interval
-4. Execute search via `search_jobs()`
-5. Save results to CSV/Excel
-6. Update database
-7. Send Telegram notification if new jobs found
+    Args:
+        df: DataFrame with all jobs.
+        config: Configuration with threshold.
 
-### 8. scripts/scheduler.py (NEW)
+    Returns:
+        Filtered and sorted DataFrame.
+    """
+```
 
-APScheduler integration for automated periodic execution:
+### 3. Scheduler (`scheduler.py`)
 
-**Key Class**: `JobSearchScheduler`
-- `start()`: Start continuous scheduled execution
-- `run_once()`: Execute single search (non-scheduled mode)
-- `stop()`: Graceful shutdown
+APScheduler integration for automated periodic execution.
 
-**Features**:
+```python
+class JobSearchScheduler:
+    """
+    Scheduler wrapper for job search automation.
+
+    Attributes:
+        _scheduler: BackgroundScheduler
+        _search_func: Callable[[], bool]
+        _config: SchedulerConfig
+
+    Methods:
+        start() -> None       # Begin scheduled execution
+        run_once() -> bool    # Execute single search
+        stop() -> None        # Graceful shutdown
+    """
+```
+
+**Features:**
+
 - Configurable interval (default: 24 hours)
-- Optional immediate run on startup
-- Retry logic on failure
-- Graceful signal handling (SIGINT, SIGTERM)
+- Optional immediate execution on startup
+- Retry logic on failure with configurable delay
+- Signal handling for graceful shutdown (SIGINT, SIGTERM)
 
-### 9. scripts/notifier.py (NEW)
+### 4. Notification System (`notifier.py`)
 
-Telegram notification system:
+Extensible notification framework with Telegram implementation.
 
-**Key Classes**:
-- `BaseNotifier`: Abstract base class for notification channels
-- `TelegramNotifier`: Telegram-specific implementation
-- `NotificationManager`: Manages all configured channels
+**Class Hierarchy:**
 
-**NotificationData Structure**:
+```python
+class BaseNotifier(ABC):
+    """Abstract base class for notification channels."""
+
+    @abstractmethod
+    async def send_notification(self, data: NotificationData) -> bool:
+        """Send notification. Returns True on success."""
+
+    @abstractmethod
+    def is_configured(self) -> bool:
+        """Check if channel is properly configured."""
+
+class TelegramNotifier(BaseNotifier):
+    """
+    Telegram notification implementation.
+
+    Features:
+    - MarkdownV2 formatting
+    - Chunked messages (10 jobs per message)
+    - URL escaping for special characters
+    - Configurable minimum score threshold
+    """
+
+class NotificationManager:
+    """
+    Manages all configured notification channels.
+
+    Methods:
+        send_all(data) -> dict[str, bool]       # Async
+        send_all_sync(data) -> dict[str, bool]  # Sync wrapper
+    """
+```
+
+**Notification Data Structure:**
+
 ```python
 @dataclass
 class NotificationData:
@@ -296,594 +298,459 @@ class NotificationData:
     all_new_jobs: list[JobDBRecord]
 ```
 
-**Telegram Message Format**:
-- Summary header with run statistics
-- Top N new jobs with details (title, company, location, score)
-- Clickable links to job postings
-- MarkdownV2 formatting
+### 5. Database Layer (`database.py`)
 
-### 10. scripts/report_generator.py (NEW)
+SQLite persistence with automatic migration support.
 
-Report formatting utilities:
-
-**Key Functions**:
-- `generate_text_summary()`: Plain text report
-- `generate_markdown_summary()`: Markdown formatted report
-- `jobs_to_dataframe()`: Convert JobDBRecord list to DataFrame
-- `generate_excel_report()`: Create Excel file in memory (BytesIO)
-
-### 11. scripts/analyze_jobs.py
-
-Results analysis and reporting:
-
-**Key Functions**:
-- `load_latest_results(config)`: Load most recent CSV file
-- `analyze_companies(df)`: Top 15 companies by job count
-- `analyze_locations(df)`: Top 10 locations
-- `analyze_keywords(df)`: Top 20 keywords in titles
-- `analyze_salary(df)`: Salary statistics if available
-- `analyze_job_types(df)`: Job type distribution
-- `analyze_remote(df)`: Remote vs on-site
-- `generate_report(df, config)`: Comprehensive report
-- `analyze_database(config)`: Database statistics
-- `export_filtered_by_company(df, companies, config)`: Filter by company
-
-### 12. scripts/dashboard.py
-
-Streamlit interactive dashboard:
-
-**Key Features**:
-- Data loading from CSV files AND SQLite database (same columns now!)
-- Robust path detection for both local and Docker execution
-- Comprehensive filtering (text search, job level, sites, companies, etc.)
-- Statistics view with metrics and charts
-- Sortable/configurable job table with clickable job links
-- Job details view with full description
-- Export to CSV/Excel
-- Cache refresh button
-
-**Key Functions**:
-- `load_csv_files()`: Load all CSV files from results directory (cached)
-- `load_database()`: Load jobs from SQLite database (cached)
-- `apply_filters(df, filters)`: Apply all filters to dataframe
-- `render_sidebar_filters(df)`: Render filter UI
-- `render_statistics(df, filtered_df)`: Render statistics section
-- `render_job_table(df)`: Render job results table with clickable links
-- `render_job_details(df)`: Render detailed job view
-- `render_export_section(df)`: Render export options
-
-**Path Resolution** (for Docker compatibility):
 ```python
-# Handles both local and Docker/Streamlit execution
-_script_dir = Path(__file__).resolve().parent
-if _script_dir.name == "scripts":
-    BASE_DIR = _script_dir.parent
-else:
-    # Fallback for Docker
-    ...
-if str(BASE_DIR).startswith("/app"):
-    BASE_DIR = Path("/app")
+class JobDatabase:
+    """
+    SQLite database for job persistence.
+
+    Methods:
+        save_job(job, site, job_level, company_url) -> tuple[str, bool]
+        save_jobs_from_dataframe(df) -> tuple[int, int]
+        get_all_jobs() -> list[JobDBRecord]
+        get_jobs_first_seen_today() -> list[JobDBRecord]
+        get_new_job_ids(job_ids) -> set[str]
+        filter_new_jobs(df) -> pd.DataFrame
+        mark_as_applied(job_id) -> bool
+        get_statistics() -> dict
+        export_to_dataframe() -> pd.DataFrame
+    """
 ```
 
-## Common Commands
+**Utility Functions:**
 
-### Run Job Search (Single-Shot Mode)
+```python
+def recalculate_all_scores(db: JobDatabase, config: Config) -> int:
+    """
+    Recalculate relevance scores for all existing jobs.
 
-**Using Docker** (recommended):
-```bash
-# Build and run (first time)
-docker-compose up --build
+    Called once at startup to apply current scoring criteria
+    to historical data.
 
-# Subsequent runs
-docker-compose up
+    Returns:
+        Number of jobs updated.
+    """
 
-# Run in background
-docker-compose up -d
+def cleanup_old_jobs(db: JobDatabase, days: int) -> int:
+    """
+    Delete jobs not seen in the specified number of days.
 
-# View logs
-docker-compose logs -f
+    Returns:
+        Number of jobs deleted.
+    """
 ```
 
-**Using Local Python** (requires 3.10+):
-```bash
-# Install dependencies
-pip install -r requirements.txt
+### 6. Configuration System (`config.py`)
 
-# Run search (new unified entry point)
-cd scripts
-python main.py
+Type-safe configuration loading with validation.
 
-# Or use legacy entry point
-python search_jobs.py
+**Dataclass Hierarchy:**
 
-# Analyze results
-python analyze_jobs.py
-
-# Launch dashboard
-streamlit run dashboard.py
+```python
+@dataclass
+class Config:
+    search: SearchConfig
+    queries: dict[str, list[str]]
+    scoring: ScoringConfig
+    parallel: ParallelConfig
+    retry: RetryConfig
+    throttling: ThrottlingConfig
+    post_filter: PostFilterConfig
+    logging: LoggingConfig
+    database: DatabaseConfig
+    output: OutputConfig
+    profile: ProfileConfig
+    scheduler: SchedulerConfig
+    notifications: NotificationsConfig
 ```
 
-### Run Scheduled Mode (with Notifications)
+**Key Functions:**
 
-First, configure `config/settings.yaml`:
+```python
+def load_config() -> Config:
+    """Load configuration from YAML with validation."""
+
+def get_config() -> Config:
+    """Get singleton configuration instance (thread-safe)."""
+
+def reload_config() -> Config:
+    """Force reload configuration from file."""
+```
+
+**Validation:**
+
+All numeric parameters are validated:
+- `max_workers >= 1`
+- `max_attempts >= 1`
+- `base_delay >= 0`
+- `backoff_factor >= 1.0`
+- `jitter` between 0 and 1.0
+- `cleanup_days >= 1`
+
+### 7. Data Models (`models.py`)
+
+Type-safe dataclasses for data structures.
+
+```python
+@dataclass
+class Job:
+    """
+    Single job listing.
+
+    Properties:
+        job_id: str  # SHA256 hash of title+company+location (64 chars)
+
+    Methods:
+        from_dict(data: dict) -> Job
+        to_dict() -> dict
+    """
+
+@dataclass
+class JobDBRecord:
+    """Database record with all columns."""
+
+@dataclass
+class SearchResult:
+    """Results from a single query."""
+
+@dataclass
+class SearchSummary:
+    """Statistics for complete search run."""
+```
+
+---
+
+## Database Schema
+
+```sql
+CREATE TABLE jobs (
+    job_id TEXT PRIMARY KEY,           -- SHA256 hash (64 chars)
+    title TEXT NOT NULL,
+    company TEXT NOT NULL,
+    location TEXT NOT NULL,
+    job_url TEXT,
+    site TEXT,                          -- indeed, linkedin, glassdoor
+    job_type TEXT,                      -- fulltime, contract, etc.
+    is_remote BOOLEAN,
+    job_level TEXT,                     -- entry, mid, senior
+    description TEXT,
+    date_posted DATE,
+    min_amount REAL,                    -- Salary minimum
+    max_amount REAL,                    -- Salary maximum
+    currency TEXT,
+    company_url TEXT,
+    first_seen DATE NOT NULL,           -- When first discovered
+    last_seen DATE NOT NULL,            -- Most recent occurrence
+    relevance_score INTEGER DEFAULT 0,
+    applied BOOLEAN DEFAULT FALSE
+)
+```
+
+**Update Logic (UPSERT):**
+
+On conflict (same `job_id`):
+- `last_seen` is always updated to current date
+- `relevance_score` is updated only if new score is higher
+- Other fields use `COALESCE` (keep existing if new is NULL)
+
+**Automatic Migration:**
+
+When the database is opened, missing columns are added via `ALTER TABLE`.
+
+---
+
+## Configuration System
+
+### File Structure
+
 ```yaml
+# Search parameters
+search:
+  results_wanted: 50
+  hours_old: 168
+  job_types: ["fulltime", "contract"]
+  sites: ["indeed", "linkedin"]
+  locations: ["San Francisco, CA"]
+  distance: 50
+  is_remote: false
+
+# Query definitions (by category)
+queries:
+  category_name:
+    - "query string"
+
+# Scoring system
+scoring:
+  threshold: 15
+  weights:
+    category_name: 25
+  keywords:
+    category_name:
+      - "keyword"
+
+# Execution tuning
+parallel:
+  max_workers: 4
+
+retry:
+  max_attempts: 3
+  base_delay: 2
+  backoff_factor: 2
+
+throttling:
+  enabled: true
+  default_delay: 1.5
+  site_delays:
+    linkedin: 3.0
+  jitter: 0.3
+
+# Scheduling
 scheduler:
   enabled: true
   interval_hours: 24
+  run_on_startup: true
 
+# Notifications
 notifications:
   enabled: true
   telegram:
     enabled: true
-    bot_token: "YOUR_BOT_TOKEN"
-    chat_ids:
-      - "YOUR_CHAT_ID"
-```
+    bot_token: "..."
+    chat_ids: ["..."]
+    min_score_for_notification: 20
+    max_jobs_in_message: 50
 
-Then run:
-```bash
-# Using Docker (recommended - runs continuously)
-docker-compose --profile scheduler up scheduler --build
+# Database maintenance
+database:
+  cleanup_enabled: true
+  cleanup_days: 30
 
-# Or using local Python
-cd scripts
-python main.py
-```
-
-### Launch Dashboard
-
-```bash
-# Using Docker
-docker-compose --profile dashboard up dashboard
-# Open http://localhost:8501
-
-# Using local Python
-cd scripts
-streamlit run dashboard.py
-```
-
-### Setup Telegram Bot
-
-1. **Create bot with @BotFather**:
-   - Open Telegram and search for `@BotFather`
-   - Send `/newbot` and follow instructions
-   - Copy the bot token (format: `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
-
-2. **Get your chat_id**:
-   - Start a chat with your new bot (send any message)
-   - Visit: `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
-   - Look for `"chat":{"id": YOUR_CHAT_ID}`
-
-3. **Configure settings.yaml**:
-   ```yaml
-   notifications:
-     enabled: true
-     telegram:
-       enabled: true
-       bot_token: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
-       chat_ids:
-         - "987654321"  # Your chat ID
-   ```
-
-4. **Test notification**:
-   ```bash
-   docker-compose --profile scheduler up scheduler --build
-   ```
-
-### Database Queries
-
-```bash
-# Statistics
-sqlite3 data/jobs.db "SELECT COUNT(*), AVG(relevance_score) FROM jobs"
-
-# New jobs today
-sqlite3 data/jobs.db "SELECT title, company FROM jobs WHERE first_seen = date('now')"
-
-# Top jobs not yet applied
-sqlite3 data/jobs.db "SELECT title, company, relevance_score FROM jobs WHERE applied = 0 ORDER BY relevance_score DESC LIMIT 10"
-
-# Mark job as applied
-sqlite3 data/jobs.db "UPDATE jobs SET applied = 1 WHERE job_id = 'abc123...'"
-
-# Jobs by site
-sqlite3 data/jobs.db "SELECT site, COUNT(*) FROM jobs GROUP BY site"
-
-# Remote jobs
-sqlite3 data/jobs.db "SELECT title, company FROM jobs WHERE is_remote = 1 ORDER BY relevance_score DESC"
-
-# Jobs with salary info
-sqlite3 data/jobs.db "SELECT title, company, min_amount, max_amount, currency FROM jobs WHERE min_amount IS NOT NULL"
-```
-
-### View Logs
-
-```bash
-# Latest log
-tail -f logs/search.log
-
-# Search for errors
-grep ERROR logs/search.log
-```
-
-## Configuration Guide
-
-### Modify Search Queries
-
-Edit `config/settings.yaml`:
-
-```yaml
-queries:
-  my_custom_category:
-    - "my custom query"
-    - "another query"
-```
-
-No code changes required!
-
-### Adjust Relevance Scoring
-
-The scoring system is **fully dynamic**: it iterates over all keyword categories you define and applies the corresponding weight. No code changes needed - just edit `config/settings.yaml`:
-
-```yaml
-scoring:
-  threshold: 15  # Minimum score to be "relevant"
-
-  # Define your own categories - names must match between weights and keywords
-  weights:
-    primary_skills: 25      # High priority
-    technologies: 15        # Medium priority
-    nice_to_have: 5         # Low priority
-    avoid: 0                # Category exists but adds no points
-
-  # Keywords for each category (searched case-insensitive)
-  keywords:
-    primary_skills:
-      - "software engineer"
-      - "backend developer"
-    technologies:
-      - "python"
-      - "docker"
-      - "kubernetes"
-    nice_to_have:
-      - "remote"
-      - "startup"
-```
-
-**How it works:**
-1. For each job, builds searchable text from: title + description + company + location
-2. For each category in `keywords`, checks if ANY keyword matches
-3. If matched, adds the category's weight from `weights`
-4. Total score determines if job is "relevant" (score >= threshold)
-
-**IMPORTANT**: Category names in `weights` must match those in `keywords`. If a category has no weight defined, it defaults to 0.
-
-### Change Search Parameters
-
-Edit `config/settings.yaml`:
-
-```yaml
-search:
-  results_wanted: 20    # Reduce if rate limited
-  hours_old: 168        # 7 days instead of 30
-  country_indeed: "USA" # Country for Indeed domain
-  locations:
-    - "New York, NY"
-    - "Remote"
-```
-
-### Adjust Parallelism
-
-Edit `config/settings.yaml`:
-
-```yaml
-parallel:
-  max_workers: 3  # Reduce if rate limited
-
-retry:
-  max_attempts: 5
-  base_delay: 5
-```
-
-### Configure Scheduling
-
-Edit `config/settings.yaml`:
-
-```yaml
-scheduler:
-  enabled: true           # Enable scheduled mode
-  interval_hours: 24      # Run every 24 hours
-  run_on_startup: true    # Run immediately when starting
-  retry_on_failure: true  # Retry if search fails
-  retry_delay_minutes: 30 # Wait 30 min before retry
-```
-
-### Configure Throttling
-
-Throttling adds delays between requests to prevent rate limiting from job boards. Edit `config/settings.yaml`:
-
-```yaml
-throttling:
-  enabled: true           # Enable throttling (recommended)
-  default_delay: 1.5      # Default delay between requests (seconds)
-  site_delays:            # Per-site delay overrides
-    linkedin: 3.0         # LinkedIn has aggressive rate limiting
-    indeed: 1.0           # Indeed is more lenient
-    glassdoor: 1.5        # Glassdoor is moderate
-    google: 2.0
-    ziprecruiter: 1.5
-  jitter: 0.3             # Random variation (0.3 = 30%)
-  rate_limit_cooldown: 30.0  # Cooldown after rate limit error
-```
-
-**Expected performance with throttling enabled:**
-
-| Configuration | 100 Searches | Notes |
-|---------------|--------------|-------|
-| No throttling, 4 workers | ~3 min | High rate limit risk |
-| 1.5s delay, 4 workers | ~8 min | Moderate risk |
-| 3.0s delay, 2 workers | ~15 min | Low risk |
-
-### Configure Fuzzy Post-Filtering
-
-Post-filtering validates that returned jobs actually match your search query and location. This is important because job boards often return "related" results that don't match the original query. Edit `config/settings.yaml`:
-
-```yaml
-post_filter:
-  enabled: true           # Enable fuzzy post-filtering (recommended)
-  min_similarity: 80      # Similarity threshold 0-100 (80 = allows zürich/zurich)
-  check_query_terms: true # Verify all query words are in job data
-  check_location: true    # Verify location matches (skipped for "Remote")
-```
-
-**How it works:**
-- For query `"python developer"` with location `"Zurich, Switzerland"`:
-  - Job must contain "python" somewhere (title/description/company)
-  - Job must contain "developer" somewhere
-  - Job must contain "zurich" OR "switzerland" in location
-- Uses fuzzy matching: `zürich` ≈ `zurich` ≈ `zuerich` (within 80% similarity)
-- Handles typos: `pythom` ≈ `python`
-
-### Configure Telegram Notifications
-
-Edit `config/settings.yaml`:
-
-```yaml
-notifications:
-  enabled: true
-  telegram:
-    enabled: true
-    bot_token: "YOUR_BOT_TOKEN"        # From @BotFather
-    chat_ids:
-      - "YOUR_CHAT_ID"                 # Your personal chat ID
-    send_summary: true                 # Send after each run
-    min_score_for_notification: 15     # Only jobs with score >= 15
-    max_jobs_in_message: 50            # Max jobs in message (was hardcoded to 10)
-```
-
-### Disable CSV/Excel Output
-
-Edit `config/settings.yaml`:
-
-```yaml
+# Output options
 output:
   results_dir: "results"
   data_dir: "data"
-  database_file: "jobs.db"
-  save_csv: false   # Disable CSV file generation
-  save_excel: false # Disable Excel file generation
+  save_csv: true
+  save_excel: true
 ```
 
-The SQLite database is always used (required for core functionality). CSV/Excel are optional exports for human review.
+### Dynamic Scoring
 
-## Output Files
+The scoring system is fully configuration-driven:
 
-All files saved with timestamp format `YYYYMMDD_HHMMSS`:
+1. Category names in `weights` must match those in `keywords`
+2. Weights can be positive (bonus) or negative (penalty)
+3. Unknown categories default to weight 0
+4. All matching is case-insensitive
 
-**Required (core system):**
-- `data/jobs.db` - SQLite database with full job history (PRIMARY storage)
-- `logs/search.log` - Structured log file with rotation
+---
 
-**Optional (controlled by `save_csv` and `save_excel` in config):**
-- `results/all_jobs_{timestamp}.csv` - All jobs found
-- `results/all_jobs_{timestamp}.xlsx` - Excel with formatting
-- `results/relevant_jobs_{timestamp}.csv` - Jobs with score > threshold
-- `results/relevant_jobs_{timestamp}.xlsx` - Excel with highlighting
+## Execution Flow
 
-**Note:** The SQLite database is the PRIMARY storage used by the core system for:
-- Tracking all jobs seen across runs
-- Identifying new vs already-seen jobs
-- Determining which jobs to notify about
-- Marking jobs as "applied"
+### Startup Sequence
 
-CSV/Excel files are OPTIONAL and only used for human review/export. Set `save_csv: false` and `save_excel: false` in config to disable them.
-
-## Troubleshooting
-
-### Rate Limiting
-
-**Symptoms**: Empty results, connection errors after some queries, 429 errors
-
-**Solutions**:
-1. Enable throttling if disabled: `throttling.enabled: true`
-2. Increase delays: `throttling.default_delay: 2.0` or higher
-3. Increase LinkedIn-specific delay: `throttling.site_delays.linkedin: 5.0`
-4. Reduce `parallel.max_workers` to 2-3 in settings.yaml
-5. Reduce `search.results_wanted` to 20
-6. Increase `retry.base_delay` to 5
-7. Run at different times of day
-
-### Docker Build Fails
-
-```bash
-docker-compose down
-docker system prune -f
-docker-compose up --build
+```
+main()
+├── Load configuration
+├── Setup logging
+├── Get database connection
+├── recalculate_all_scores()     # Once at startup
+├── Create scheduler
+└── scheduler.start() or scheduler.run_once()
 ```
 
-### Import Errors
+### Search Iteration
 
-Ensure you're running from the scripts directory:
-
-```bash
-cd scripts
-python search_jobs.py
+```
+run_job_search()
+├── Reload configuration
+├── Get database connection
+├── cleanup_old_jobs()           # Each iteration (if enabled)
+├── search_jobs()
+│   ├── Build query-location pairs
+│   ├── Execute parallel searches (ThreadPoolExecutor)
+│   ├── Apply per-site throttling
+│   ├── Deduplicate results
+│   └── Return combined DataFrame
+├── filter_relevant_jobs()
+│   ├── Calculate scores for all jobs
+│   ├── Filter by threshold
+│   └── Sort by score descending
+├── save_results()               # CSV/Excel (if enabled)
+├── db.save_jobs_from_dataframe()
+└── _send_notifications()        # For new jobs only
 ```
 
-### Database Locked
+---
 
-SQLite can only have one writer at a time. Wait for current operation or:
+## Development Guide
 
-```bash
-# Kill any running search
-docker-compose down
-```
+### Adding a Scoring Category
 
-### Dashboard Shows Different Data (CSV vs DB)
+No code changes required:
 
-After updating the database schema, run a new search to populate all columns:
-
-```bash
-docker-compose up --build
-```
-
-Or delete the old database and start fresh:
-
-```bash
-rm data/jobs.db
-docker-compose up --build
-```
-
-### Python Version
-
-This tool requires Python 3.10+ (JobSpy library requirement). Check your version:
-
-```bash
-python3 --version
-```
-
-If below 3.10, use Docker.
-
-## Development Notes
-
-### Adding a New Scoring Category
-
-1. Add keywords to `config/settings.yaml`:
 ```yaml
+# config/settings.yaml
 scoring:
+  weights:
+    new_category: 15
   keywords:
-    my_category:
+    new_category:
       - "keyword1"
       - "keyword2"
-  weights:
-    my_category: 10
 ```
 
-2. The scoring logic in `scripts/search_jobs.py` dynamically reads from config, so no code changes needed!
+### Adding a Database Column
 
-### Adding a New Database Column
-
-1. Add to `CREATE_TABLE` in `scripts/database.py`
-2. Add migration statement to `MIGRATE_COLUMNS` list
+1. Update `CREATE_TABLE` in `database.py`
+2. Add to `MIGRATE_COLUMNS` list
 3. Update `INSERT_OR_UPDATE` query
 4. Update `SELECT_ALL` and `SELECT_NEW` queries
-5. Update `JobDBRecord` dataclass in `scripts/models.py`
+5. Add field to `JobDBRecord` in `models.py`
 6. Update `_row_to_record()` method
 7. Update `export_to_dataframe()` method
-8. Update `save_job()` and `save_jobs_from_dataframe()` methods
 
-### Adding a New Configuration Section
+### Adding a Notification Channel
 
-1. Add to `config/settings.yaml`
-2. Create dataclass in `scripts/config.py`
-3. Add parsing function `_parse_xxx_config()`
-4. Update `Config` class with new field
-5. Update `load_config()` to include new section
+1. Create class extending `BaseNotifier`:
 
-### Type Hints
+```python
+class SlackNotifier(BaseNotifier):
+    def __init__(self, config: SlackConfig):
+        self.config = config
 
-All functions use type hints. Run type checker:
+    def is_configured(self) -> bool:
+        return self.config.enabled and bool(self.config.webhook_url)
 
-```bash
-pip install mypy
-mypy scripts/
+    async def send_notification(self, data: NotificationData) -> bool:
+        # Implementation
+        pass
+```
+
+2. Add configuration dataclass in `config.py`
+3. Register in `NotificationManager._setup_notifiers()`
+
+### Adding a Configuration Section
+
+1. Create dataclass:
+
+```python
+@dataclass
+class NewSectionConfig:
+    param1: str = "default"
+    param2: int = 10
+```
+
+2. Add parsing function:
+
+```python
+def _parse_new_section_config(data: dict) -> NewSectionConfig:
+    section_data = data.get("new_section", {})
+    # Validation...
+    return NewSectionConfig(...)
+```
+
+3. Add to `Config` dataclass
+4. Update `load_config()` to include parsing
+
+---
+
+## Testing
+
+### Test Structure
+
+```
+tests/
+├── conftest.py          # Shared fixtures
+├── test_models.py       # Job ID, dataclass conversions
+├── test_config.py       # Configuration validation
+├── test_database.py     # CRUD, deduplication, statistics
+└── test_scoring.py      # Scoring calculation, fuzzy matching
 ```
 
 ### Running Tests
 
-The project includes a comprehensive test suite using pytest:
-
 ```bash
-# Install dev dependencies
+# Install dependencies
 pip install -r requirements-dev.txt
 
-# Run all tests
+# All tests
 pytest
 
-# Run with coverage
+# With coverage
 pytest --cov=scripts --cov-report=html
 
-# Run specific test file
-pytest tests/test_models.py
+# Specific file
+pytest tests/test_config.py -v
 
-# Run with verbose output
-pytest -v
+# Specific test
+pytest tests/test_models.py::test_job_id_generation -v
 ```
 
-**Test Coverage:**
-- `test_models.py`: Job ID generation, dataclass conversions, SearchSummary
-- `test_config.py`: All configuration validation (29 tests)
-- `test_database.py`: CRUD operations, deduplication, statistics
-- `test_scoring.py`: Scoring calculation, fuzzy matching (requires rapidfuzz)
+### Test Coverage
 
-**Note:** Some tests require all dependencies installed. In minimal environments, tests that require missing packages will be skipped automatically.
+| Module | Tests | Coverage |
+|--------|-------|----------|
+| models.py | 13 | Job ID, conversions |
+| config.py | 29 | All validation |
+| database.py | 18 | CRUD, dedup, stats |
+| scoring | varies | Requires rapidfuzz |
 
-### Logging Best Practices
+---
 
-- Use `get_logger("module_name")` for module-specific loggers
-- Use `log_section()` for major operations
-- Use `log_subsection()` for sub-operations
-- Log levels: DEBUG for details, INFO for progress, WARNING for issues, ERROR for failures
+## Performance Optimization
 
-## Performance
+### Parallel Execution
 
-### Parallel Execution with Throttling
-
-- Default 5 workers with throttling enabled provides balance between speed and rate limit safety
-- Throttling uses per-site delays (LinkedIn: 3s, Indeed: 1s, etc.)
-- Jitter (default 30%) randomizes delays to avoid detection patterns
-- Reduce workers to 2-3 if still hitting rate limits
-- Each worker handles one query-location pair
-
-**Estimated execution times (100 searches):**
-
-| Throttling | Workers | Est. Time | Rate Limit Risk |
-|------------|---------|-----------|-----------------|
+| Throttling | Workers | Est. Time (100 queries) | Rate Limit Risk |
+|------------|---------|-------------------------|-----------------|
 | Disabled | 5 | ~3 min | High |
 | 1.5s delay | 5 | ~8 min | Moderate |
 | 3.0s delay | 3 | ~15 min | Low |
 | 3.0s delay | 1 | ~30 min | Minimal |
 
-### Memory Usage
+### Memory Optimization
 
-- Incremental deduplication reduces peak memory
-- Large result sets (~10k jobs) may use ~500MB
-- SQLite database grows with job count
+- Incremental deduplication during collection
+- No unnecessary DataFrame copies
+- SQLite for persistent storage (not in-memory)
 
-### Database
+### Database Performance
 
-- Tracks all jobs seen across runs with full details
-- Identifies new jobs vs previously seen
-- Supports marking jobs as "applied"
-- Same columns as CSV for consistent dashboard experience
+- SHA256 job IDs for O(1) deduplication
+- Batch inserts via `save_jobs_from_dataframe()`
+- Connection context managers for proper cleanup
+
+---
 
 ## External Dependencies
 
 ### JobSpy Library
-- **GitHub**: https://github.com/speedyapply/JobSpy
-- **Version**: 1.1.82 (latest as of December 2025)
-- **Capabilities**: Scrapes LinkedIn, Indeed, Glassdoor, Google Jobs, Bayt, Naukri, BDJobs
 
-### Pandas DataFrame Schema (JobSpy Output)
+- **Repository**: https://github.com/speedyapply/JobSpy
+- **Version**: 1.1.82+
+
+**Key Behaviors:**
+
+| Site | Rate Limiting | Jobs/Page | Notes |
+|------|---------------|-----------|-------|
+| Indeed | Minimal | 100 | Best coverage |
+| LinkedIn | Aggressive | 25 | 3-7s built-in delays |
+| Glassdoor | Moderate | 30 | GraphQL API |
+
+**Indeed Filter Limitation:**
+
+Indeed can only use ONE of:
+- `hours_old` (date filtering)
+- `job_type` + `is_remote`
+- `easy_apply`
+
+We prioritize `hours_old` for fresh results.
+
+### DataFrame Schema (JobSpy Output)
+
 ```python
 columns = [
     'id', 'site', 'job_url', 'job_url_direct', 'title', 'company',
@@ -897,213 +764,87 @@ columns = [
 ]
 ```
 
-## JobSpy Optimization Guide
-
-Based on analysis of JobSpy v1.1.82 source code:
-
-### Key Findings
-
-1. **JobSpy Already Uses Parallelism Internally**
-   - In `__init__.py:120`, JobSpy uses ThreadPoolExecutor to scrape all sites concurrently
-   - Our parallel query execution complements this (we parallelize queries, JobSpy parallelizes sites)
-
-2. **Indeed Filter Limitation** (Critical!)
-   - Indeed can only use ONE of:
-     - `hours_old` (date filtering)
-     - `job_type + is_remote` (combined filter)
-     - `easy_apply`
-   - **We prioritize `hours_old` over `job_type`** for fresher results
-
-3. **LinkedIn Rate Limiting**
-   - Built-in delays: 3-7 seconds between requests
-   - Hard limit at 1000 results
-   - Heavy rate limiting around 10th page
-   - `linkedin_fetch_description=True` doubles request count
-
-4. **Glassdoor Issues**
-   - "Location not parsed" errors occur when location doesn't match database
-   - 400 errors can be rate limiting or invalid queries
-
-### Optimized Parameters
-
-| Parameter | Setting | Reason |
-|-----------|---------|--------|
-| `distance` | 50 | 50 miles (~80km) covers metropolitan areas |
-| `enforce_annual_salary` | true | Normalizes all salaries for comparison |
-| `description_format` | "markdown" | Best for text analysis |
-| `verbose` | 1 | Reduces noise (we have our own logging) |
-
-### Site-Specific Behavior
-
-**Indeed** (best coverage):
-- No significant rate limiting
-- 100 jobs per page internally
-- Supports all filter parameters (with limitations above)
-
-**LinkedIn**:
-- Uses guest API (no login required)
-- 25 jobs per page
-- Aggressive rate limiting
-- `linkedin_fetch_description=True` fetches full descriptions (slower but more data)
-
-**Glassdoor**:
-- GraphQL API
-- 30 jobs per page
-- May have location parsing issues
-
-**Google Jobs**:
-- Requires specific `google_search_term` syntax
-- Normal `search_term` doesn't work well
-- Syntax: copy from Google Jobs search bar
-
-### Verbosity Levels
-
-```python
-verbose=0  # Errors only
-verbose=1  # Errors + warnings (recommended)
-verbose=2  # All logs (default, very noisy)
-```
-
-### Known Limitations
-
-1. **Cannot filter by job_type AND hours_old on Indeed** - we prioritize freshness
-2. **LinkedIn rate limits quickly** - use proxies for heavy scraping
-3. **Glassdoor location parsing** - some queries return "location not parsed"
-4. **Google Jobs needs specific syntax** - disabled by default
-
-## License
-
-MIT License - See LICENSE file for details.
-
 ---
-
-**Last Updated**: 2026-01-01
 
 ## Changelog
 
-### v2.5.3 (2026-01-01) - Score Recalculation on Startup
+### v2.5.4 (2026-01-01)
 
-**NEW:**
-- **Score Recalculation**: All existing jobs in the database now have their relevance scores recalculated on startup using the current scoring configuration
-- This allows changing scoring criteria in `settings.yaml` without losing job history or needing to clear the database
-- Added `recalculate_all_scores()` function in `database.py`
+**Features:**
+- Chunked Telegram messages (10 jobs per message) to avoid 4096 char limit
+- Database cleanup feature (`database.cleanup_enabled`, `database.cleanup_days`)
+- Score recalculation moved to startup only (not every iteration)
 
-**WORKFLOW IMPROVEMENT:**
-- Modify `settings.yaml` scoring weights/keywords
-- Run `docker compose up` (no rebuild needed - config is mounted as volume)
-- All existing jobs are rescored with the new criteria before the search begins
+**Performance:**
+- Reduced unnecessary database operations during scheduled runs
 
-### v2.5.2 (2025-12-31) - Telegram URL Fix
+### v2.5.3 (2026-01-01)
 
-**FIX:**
-- **Telegram MarkdownV2**: Fixed URL escaping in Telegram notifications - URLs with special characters now display correctly
+**Features:**
+- Score recalculation on startup for existing jobs
+- `recalculate_all_scores()` function in database.py
 
-### v2.5.1 (2025-12-31) - Docker Build Fix
+### v2.5.2 (2025-12-31)
 
-**FIX:**
-- **Docker Build**: Removed non-existent `templates/` directory reference from Dockerfile that was causing build failures
+**Fixes:**
+- Telegram MarkdownV2 URL escaping
 
-### v2.5.0 (2025-12-31) - Stability & Testing Release
+### v2.5.1 (2025-12-31)
 
-**CRITICAL FIXES:**
-- **FIX**: Added missing `self.logger` in `database.py` - was causing `AttributeError` on migration failures
-- **FIX**: Fixed async/sync bridge in `notifier.py` - `send_all_sync()` now works correctly in async contexts using ThreadPoolExecutor
-- **FIX**: Increased job ID hash from 16 to 64 characters (full SHA256) - prevents collisions with large job databases
+**Fixes:**
+- Docker build: removed non-existent templates/ directory
 
-**TIMEZONE:**
-- **FIX**: Removed hardcoded `TZ=Europe/Zurich` from Docker - now uses `logging.timezone` from config (default: UTC)
-- **NEW**: `logging.timezone` configuration option for customizable log timestamps
+### v2.5.0 (2025-12-31)
 
-**VALIDATION:**
-- **NEW**: Comprehensive input validation for all numeric config parameters:
-  - `max_workers >= 1`
-  - `max_attempts >= 1`
-  - `base_delay >= 0`
-  - `backoff_factor >= 1.0`
-  - `jitter` between 0 and 1.0
-  - `site_delays` all >= 0
-  - `max_size_mb > 0`
-  - `backup_count >= 0`
-  - `min_score_for_notification >= 0`
-  - `max_jobs_in_message >= 1`
-- **NEW**: Chat IDs are now validated and normalized to strings
+**Critical Fixes:**
+- Missing `self.logger` in database.py
+- Async/sync bridge in notifier.py
+- Job ID hash increased to 64 characters
 
-**EXCEPTION HANDLING:**
-- **REFACTOR**: Replaced broad `except Exception` in `search_jobs.py` with specific exceptions:
-  - `ConnectionError`, `TimeoutError` for network issues
-  - `ValueError` for invalid data
-  - `KeyError`, `AttributeError` for parse errors
-  - Catch-all now logs with `exc_info=True` for debugging
+**Features:**
+- Comprehensive input validation
+- Health check script
+- 60+ test suite
 
-**PERFORMANCE:**
-- **PERF**: Removed unnecessary DataFrame copies in `filter_relevant_jobs()` - reduces memory usage
+### v2.4.0 (2025-12-31)
 
-**DOCKER:**
-- **NEW**: Real health check script (`healthcheck.py`) that verifies imports, config, database, and directories
-- **FIX**: Added consistent restart policies across all services
+**Breaking Changes:**
+- Scoring system is now fully config-driven
+- Removed all hardcoded keywords and categories
 
-**TESTING:**
-- **NEW**: Comprehensive test suite with 60+ tests:
-  - `tests/test_models.py` - Job ID, dataclass conversions (13 tests)
-  - `tests/test_config.py` - Configuration validation (29 tests)
-  - `tests/test_database.py` - CRUD, deduplication, statistics (18 tests)
-  - `tests/test_scoring.py` - Scoring, fuzzy matching (requires rapidfuzz)
-- **NEW**: `requirements-dev.txt` with pytest, mypy, ruff, black
-- **NEW**: `pytest.ini` configuration file
+### v2.3.0 (2025-12-28)
 
-### v2.4.0 (2025-12-31) - Generic Scoring System
-- **BREAKING**: Scoring system is now fully config-driven (no hardcoded categories)
-- **REFACTOR**: `calculate_relevance_score()` dynamically iterates over all keyword categories
-- **REFACTOR**: Removed all hardcoded keywords (open source, hackathon, teaching, etc.)
-- **REFACTOR**: Removed all hardcoded location bonuses (zurich, lausanne, eth, epfl)
-- **REFACTOR**: Default scoring categories are now generic (primary_skills, technologies, etc.)
-- **REFACTOR**: Default queries are now generic software engineering roles
-- **FIX**: Scheduler `self._logger` typo causing silent failure on retry
-- **FIX**: Excel cell type conversion now handles float/string values safely
-- **FIX**: Banner now uses logger instead of print() for consistency
-- **FIX**: Banner text truncation prevents formatting issues with long strings
-- **DOCS**: Updated settings.example.yaml with clear instructions on category matching
-- The tool is now fully generic and works for any user with their own settings.yaml
-
-### v2.3.0 (2025-12-28) - Professional Audit & Fixes
-- **CRITICAL FIX**: Scheduler retry time calculation bug (incorrect modulo arithmetic)
-- **CRITICAL FIX**: SQL error handling now only ignores duplicate column errors
-- **HIGH FIX**: Telegram token now supports environment variable (security)
-- **HIGH FIX**: Removed hardcoded personal information from ProfileConfig defaults
-- **HIGH FIX**: SQLite connection properly managed with context manager
-- **HIGH FIX**: Race condition in job deduplication resolved
-- **HIGH FIX**: asyncio.run() now works in async contexts
-- **MEDIUM FIX**: N+1 database query optimized to single batch query
-- **MEDIUM FIX**: Dockerfile gcc removed after build (smaller image)
-- **MEDIUM FIX**: Config singleton now thread-safe with locking
-- **MEDIUM FIX**: Input validation for all config parameters
-- **MEDIUM FIX**: Version upper bounds added to all dependencies
-- **LOW FIX**: Type hints corrected (any → Any)
-- **LOW FIX**: Color codes only applied to TTY output
-- **LOW FIX**: All print() replaced with logger
-- Improved code quality, security, and thread safety throughout
-- See [AUDIT_FIXES.md](AUDIT_FIXES.md) for complete details
+**Fixes:**
+- Scheduler retry calculation bug
+- SQL error handling
+- Thread safety improvements
+- Race condition in deduplication
 
 ### v2.2.0 (2025-12-27)
-- **NEW**: Fuzzy post-filtering to validate results match query terms
-- **NEW**: `PostFilterConfig` with min_similarity, check_query_terms, check_location
-- **NEW**: Added `rapidfuzz` dependency for fuzzy string matching
-- **FIX**: Removed hardcoded 10 job limit in Telegram notifications (now uses config)
-- Handles character variations (ü/u, ö/o) and typos automatically
+
+**Features:**
+- Fuzzy post-filtering with rapidfuzz
+- Configurable throttling with jitter
 
 ### v2.1.0 (2025-12-27)
-- **NEW**: Configurable throttling to prevent rate limiting
-- **NEW**: Per-site delay configuration with jitter
-- **NEW**: `country_indeed` configuration option
-- **REFACTOR**: Renamed `search_switzerland_jobs()` to `search_jobs()` for genericity
-- **REFACTOR**: Removed Switzerland-specific defaults (now uses generic defaults)
-- **REFACTOR**: Updated logger names from `switzerland_jobs` to `job_search`
-- Simplified banner display
+
+**Features:**
+- Per-site throttling configuration
+- `country_indeed` option
 
 ### v2.0.0 (2025-12-23)
-- **NEW**: Automated scheduling with APScheduler
-- **NEW**: Telegram notifications for new jobs
-- **NEW**: Unified entry point (`main.py`)
-- **NEW**: Report generator for notification formatting
-- Updated Docker configuration with scheduler service
-- Backward compatible - existing workflows still work
+
+**Features:**
+- Automated scheduling with APScheduler
+- Telegram notifications
+- Unified entry point (main.py)
+
+---
+
+## License
+
+MIT License - See [LICENSE](LICENSE) for details.
+
+---
+
+*Last Updated: 2026-01-01*
