@@ -294,8 +294,7 @@ class NotificationData:
     new_jobs_count: int
     updated_jobs_count: int
     avg_score: float
-    top_jobs: list[JobDBRecord]
-    all_new_jobs: list[JobDBRecord]
+    new_jobs: list[JobDBRecord]  # All new jobs, sorted by score descending
 ```
 
 ### 5. Database Layer (`database.py`)
@@ -768,19 +767,34 @@ columns = [
 
 ## Changelog
 
+### v3.0.0 (2026-01-01)
+
+**Fixes:**
+- SQLite batch querying (`SQLITE_VAR_LIMIT = 500`) for large job ID sets
+- Lock duration optimized in deduplication (compute outside lock)
+- Scoring config mutation fixed (creates new dicts instead of mutating defaults)
+- Logger levelname restored after color formatting
+- Excel empty DataFrame check before save
+- Environment variable warning for unresolved Telegram bot token
+
+**Changes:**
+- NotificationData simplified: consolidated `top_jobs`/`all_new_jobs` into single `new_jobs` field
+- Precompiled regex for MarkdownV2 escaping (performance)
+- JOBS_PER_CHUNK validation via `__init_subclass__`
+- Docker memory limits added to all services
+
+**Removed:**
+- Unused imports in scheduler.py, main.py, search_jobs.py
+
 ### v2.5.4 (2026-01-01)
 
 **Features:**
-- Chunked Telegram messages (10 jobs per message) to avoid 4096 char limit
 - Database cleanup feature (`database.cleanup_enabled`, `database.cleanup_days`)
+- Chunked Telegram messages (10 jobs per message) to avoid 4096 char limit
+
+**Changes:**
 - Score recalculation moved to startup only (not every iteration)
-
-**Documentation:**
-- Complete rewrite of README.md, CLAUDE.md, CONTRIBUTING.md
-- Added ASCII architecture diagrams
-
-**Performance:**
-- Reduced unnecessary database operations during scheduled runs
+- Improved documentation with ASCII architecture diagrams
 
 ### v2.5.3 (2025-12-31)
 

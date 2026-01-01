@@ -8,6 +8,7 @@ Provides type-safe access to all configuration values.
 from __future__ import annotations
 
 import os
+import random
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -178,8 +179,6 @@ class ThrottlingConfig:
 
     def get_delay(self, site: str) -> float:
         """Get delay for a specific site with jitter applied."""
-        import random
-
         base_delay = self.site_delays.get(site.lower(), self.default_delay)
         if self.jitter > 0:
             jitter_amount = base_delay * self.jitter
@@ -214,6 +213,7 @@ class DatabaseConfig:
 
     cleanup_enabled: bool = False  # Enable automatic cleanup of old jobs
     cleanup_days: int = 30  # Delete jobs not seen in this many days
+    recalculate_scores_on_startup: bool = True  # Recalculate scores on startup
 
 
 @dataclass
@@ -387,16 +387,22 @@ def _parse_search_config(data: dict[str, Any]) -> SearchConfig:
 def _parse_scoring_config(data: dict[str, Any]) -> ScoringConfig:
     """Parse scoring configuration from dict."""
     scoring_data = data.get("scoring", {})
-    config = ScoringConfig()
+    defaults = ScoringConfig()
 
-    if "threshold" in scoring_data:
-        config.threshold = scoring_data["threshold"]
+    # Create new dicts by merging defaults with user config (no mutation)
+    weights = {**defaults.weights}
     if "weights" in scoring_data:
-        config.weights.update(scoring_data["weights"])
-    if "keywords" in scoring_data:
-        config.keywords.update(scoring_data["keywords"])
+        weights.update(scoring_data["weights"])
 
-    return config
+    keywords = {k: list(v) for k, v in defaults.keywords.items()}  # Deep copy
+    if "keywords" in scoring_data:
+        keywords.update(scoring_data["keywords"])
+
+    return ScoringConfig(
+        threshold=scoring_data.get("threshold", defaults.threshold),
+        weights=weights,
+        keywords=keywords,
+    )
 
 
 def _parse_parallel_config(data: dict[str, Any]) -> ParallelConfig:
@@ -523,6 +529,7 @@ def _parse_database_config(data: dict[str, Any]) -> DatabaseConfig:
     return DatabaseConfig(
         cleanup_enabled=database_data.get("cleanup_enabled", False),
         cleanup_days=cleanup_days,
+        recalculate_scores_on_startup=database_data.get("recalculate_scores_on_startup", True),
     )
 
 
@@ -580,7 +587,13 @@ def _parse_scheduler_config(data: dict[str, Any]) -> SchedulerConfig:
 
 
 def _parse_telegram_config(data: dict[str, Any]) -> TelegramConfig:
-    """Parse Telegram configuration from dict with validation."""
+    """Parse Telegram configuration from dict with validation.
+
+    Bot token can be specified in three ways (in order of precedence):
+    1. Environment variable TELEGRAM_BOT_TOKEN
+    2. Config value starting with $ to reference an env var (e.g., "$MY_TOKEN")
+    3. Direct value in config file (not recommended for production)
+    """
     telegram_data = data.get("telegram", {})
 
     min_score = telegram_data.get("min_score_for_notification", 0)
@@ -601,9 +614,29 @@ def _parse_telegram_config(data: dict[str, Any]) -> TelegramConfig:
             if str_id:
                 validated_chat_ids.append(str_id)
 
+    # Resolve bot_token with environment variable support
+    bot_token = telegram_data.get("bot_token", "")
+
+    # Priority 1: Check TELEGRAM_BOT_TOKEN env var
+    env_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if env_token:
+        bot_token = env_token
+    # Priority 2: If config value starts with $, resolve as env var
+    elif bot_token.startswith("$"):
+        env_var_name = bot_token.lstrip("$").strip("{}")
+        resolved_token = os.environ.get(env_var_name, "")
+        if not resolved_token:
+            import warnings
+            warnings.warn(
+                f"Environment variable '{env_var_name}' is not set. "
+                "Telegram notifications will be disabled.",
+                UserWarning,
+            )
+        bot_token = resolved_token
+
     return TelegramConfig(
         enabled=telegram_data.get("enabled", False),
-        bot_token=telegram_data.get("bot_token", ""),
+        bot_token=bot_token,
         chat_ids=validated_chat_ids,
         send_summary=telegram_data.get("send_summary", True),
         min_score_for_notification=min_score,

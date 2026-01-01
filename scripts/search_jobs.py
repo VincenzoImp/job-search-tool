@@ -8,7 +8,7 @@ Features parallel execution, throttling, retry logic, SQLite persistence, and co
 
 from __future__ import annotations
 
-import hashlib
+import random
 import re
 import threading
 import time
@@ -31,7 +31,7 @@ from tenacity import (
 from config import Config, get_config
 from database import get_database
 from logger import ProgressLogger, get_logger, log_section, setup_logging
-from models import Job, SearchSummary
+from models import Job, SearchSummary, generate_job_id
 
 
 # Thread-safe lock for shared data structures
@@ -106,8 +106,6 @@ class ThrottledExecutor:
 
             # Apply jitter to the delay
             if config.throttling.jitter > 0:
-                import random
-
                 jitter_amount = max_delay * config.throttling.jitter
                 actual_delay = max_delay + random.uniform(-jitter_amount, jitter_amount)
             else:
@@ -543,18 +541,21 @@ def search_jobs(config: Config) -> tuple[pd.DataFrame | None, SearchSummary]:
                     summary.successful_queries += 1
                     summary.total_jobs_found += len(jobs_df)
 
-                    # Deduplicate incrementally (all operations under single lock)
-                    with _jobs_lock:
-                        new_jobs = []
-                        for _, row in jobs_df.iterrows():
-                            job_key = _generate_job_key(row)
-                            if job_key not in seen_jobs:
-                                seen_jobs.add(job_key)
-                                new_jobs.append(row)
+                    # Deduplicate incrementally
+                    # Step 1: Generate keys outside lock (compute-intensive)
+                    job_keys = [_generate_job_key(row) for _, row in jobs_df.iterrows()]
 
-                        if new_jobs:
-                            new_df = pd.DataFrame(new_jobs)
-                            all_jobs.append(new_df)
+                    # Step 2: Quick lock only for set operations
+                    with _jobs_lock:
+                        new_indices = [
+                            i for i, key in enumerate(job_keys) if key not in seen_jobs
+                        ]
+                        seen_jobs.update(job_keys[i] for i in new_indices)
+
+                    # Step 3: Build DataFrame outside lock
+                    if new_indices:
+                        new_df = jobs_df.iloc[new_indices].copy()
+                        all_jobs.append(new_df)
 
                     progress.update(
                         success=True,
@@ -591,22 +592,28 @@ def search_jobs(config: Config) -> tuple[pd.DataFrame | None, SearchSummary]:
 def _generate_job_key(row: pd.Series) -> str:
     """Generate unique key for job deduplication.
 
-    Uses full SHA256 hash to prevent collisions.
+    Uses shared generate_job_id utility for consistency with Job.job_id.
     """
-    identifier = f"{row.get('title', '')}|{row.get('company', '')}|{row.get('location', '')}".lower()
-    return hashlib.sha256(identifier.encode()).hexdigest()
+    return generate_job_id(
+        str(row.get("title", "")),
+        str(row.get("company", "")),
+        str(row.get("location", "")),
+    )
 
 
 def filter_relevant_jobs(jobs_df: pd.DataFrame, config: Config) -> pd.DataFrame:
     """
     Filter jobs based on relevance score.
 
+    Note: This function modifies jobs_df in-place by adding a 'relevance_score' column.
+    The returned DataFrame is a filtered view sorted by score.
+
     Args:
-        jobs_df: DataFrame with all jobs.
+        jobs_df: DataFrame with all jobs. Will be modified to include relevance_score.
         config: Configuration with scoring settings.
 
     Returns:
-        Filtered DataFrame with relevant jobs (a copy, original is unmodified).
+        Filtered DataFrame with relevant jobs (score > threshold), sorted by score descending.
     """
     logger = get_logger("filter")
 
@@ -672,68 +679,73 @@ def save_results(
 
     # Save to Excel with formatting
     if config.output.save_excel:
-        excel_file = results_dir / f"{filename_prefix}_{timestamp}.xlsx"
+        # Skip Excel if DataFrame is empty
+        if len(jobs_df) == 0:
+            logger.debug("Skipping Excel save for empty DataFrame")
+        else:
+            excel_file = results_dir / f"{filename_prefix}_{timestamp}.xlsx"
 
-        try:
-            with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
-                jobs_df.to_excel(writer, index=False, sheet_name="Jobs")
-                worksheet = writer.sheets["Jobs"]
+            try:
+                with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
+                    jobs_df.to_excel(writer, index=False, sheet_name="Jobs")
+                    worksheet = writer.sheets["Jobs"]
 
-                # Format header row
-                header_fill = PatternFill(
-                    start_color="4472C4", end_color="4472C4", fill_type="solid"
-                )
-                header_font = Font(bold=True, color="FFFFFF")
-
-                for col_num, column_title in enumerate(jobs_df.columns, 1):
-                    cell = worksheet.cell(row=1, column=col_num)
-                    cell.fill = header_fill
-                    cell.font = header_font
-                    cell.alignment = Alignment(horizontal="center")
-
-                # Auto-adjust column widths
-                for col_num, column in enumerate(jobs_df.columns, 1):
-                    max_length = max(
-                        jobs_df[column].astype(str).map(len).max(),
-                        len(str(column)),
+                    # Format header row
+                    header_fill = PatternFill(
+                        start_color="4472C4", end_color="4472C4", fill_type="solid"
                     )
-                    adjusted_width = min(max_length + 2, 50)
-                    worksheet.column_dimensions[get_column_letter(col_num)].width = (
-                        adjusted_width
-                    )
+                    header_font = Font(bold=True, color="FFFFFF")
 
-                # Make URLs clickable
-                if "job_url" in jobs_df.columns:
-                    url_col = jobs_df.columns.get_loc("job_url") + 1
-                    for row_num in range(2, len(jobs_df) + 2):
-                        cell = worksheet.cell(row=row_num, column=url_col)
-                        if cell.value and str(cell.value).startswith("http"):
-                            cell.hyperlink = cell.value
-                            cell.font = Font(color="0563C1", underline="single")
+                    for col_num, column_title in enumerate(jobs_df.columns, 1):
+                        cell = worksheet.cell(row=1, column=col_num)
+                        cell.fill = header_fill
+                        cell.font = header_font
+                        cell.alignment = Alignment(horizontal="center")
 
-                # Freeze header row
-                worksheet.freeze_panes = "A2"
+                    # Auto-adjust column widths
+                    for col_num, column in enumerate(jobs_df.columns, 1):
+                        # Handle empty columns or all-NaN columns gracefully
+                        col_max = jobs_df[column].astype(str).map(len).max()
+                        if pd.isna(col_max):
+                            col_max = 0
+                        max_length = max(int(col_max), len(str(column)))
+                        adjusted_width = min(max_length + 2, 50)
+                        worksheet.column_dimensions[get_column_letter(col_num)].width = (
+                            adjusted_width
+                        )
 
-                # Conditional formatting for relevance score
-                if "relevance_score" in jobs_df.columns:
-                    score_col = jobs_df.columns.get_loc("relevance_score") + 1
-                    high_score_fill = PatternFill(
-                        start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"
-                    )
-                    for row_num in range(2, len(jobs_df) + 2):
-                        cell = worksheet.cell(row=row_num, column=score_col)
-                        try:
-                            if cell.value is not None and float(cell.value) >= 30:
-                                cell.fill = high_score_fill
-                        except (ValueError, TypeError):
-                            # Skip cells with non-numeric values
-                            pass
+                    # Make URLs clickable
+                    if "job_url" in jobs_df.columns:
+                        url_col = jobs_df.columns.get_loc("job_url") + 1
+                        for row_num in range(2, len(jobs_df) + 2):
+                            cell = worksheet.cell(row=row_num, column=url_col)
+                            if cell.value and str(cell.value).startswith("http"):
+                                cell.hyperlink = cell.value
+                                cell.font = Font(color="0563C1", underline="single")
 
-            logger.info(f"Saved Excel: {excel_file}")
-            excel_path = str(excel_file)
+                    # Freeze header row
+                    worksheet.freeze_panes = "A2"
 
-        except Exception as e:
-            logger.warning(f"Could not save Excel file: {e}")
+                    # Conditional formatting for relevance score
+                    if "relevance_score" in jobs_df.columns:
+                        score_col = jobs_df.columns.get_loc("relevance_score") + 1
+                        high_score_fill = PatternFill(
+                            start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"
+                        )
+                        for row_num in range(2, len(jobs_df) + 2):
+                            cell = worksheet.cell(row=row_num, column=score_col)
+                            try:
+                                if cell.value is not None and float(cell.value) >= 30:
+                                    cell.fill = high_score_fill
+                            except (ValueError, TypeError):
+                                # Skip cells with non-numeric values
+                                pass
+
+                logger.info(f"Saved Excel: {excel_file}")
+                excel_path = str(excel_file)
+
+            except Exception as e:
+                logger.warning(f"Could not save Excel file: {e}")
 
     return csv_path, excel_path
 
