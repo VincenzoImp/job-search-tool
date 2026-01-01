@@ -776,6 +776,11 @@ columns = [
 
 ## Changelog
 
+### v3.0.1 (2026-01-01)
+
+**Removed:**
+- Docker memory limits from all services (compatibility issues with some Docker versions)
+
 ### v3.0.0 (2026-01-01)
 
 **Features:**
@@ -795,7 +800,7 @@ columns = [
 **Changes:**
 - NotificationData enhanced with `top_jobs_overall` and `total_jobs_in_db` fields
 - Precompiled regex for MarkdownV2 escaping (performance)
-- Docker memory limits added to all services
+- Docker memory limits added to all services (reverted in v3.0.1)
 
 **Removed:**
 - Unused imports in scheduler.py, main.py, search_jobs.py
