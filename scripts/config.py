@@ -209,6 +209,14 @@ class LoggingConfig:
 
 
 @dataclass
+class DatabaseConfig:
+    """Database configuration."""
+
+    cleanup_enabled: bool = False  # Enable automatic cleanup of old jobs
+    cleanup_days: int = 30  # Delete jobs not seen in this many days
+
+
+@dataclass
 class OutputConfig:
     """Output paths configuration."""
 
@@ -276,6 +284,7 @@ class Config:
     throttling: ThrottlingConfig = field(default_factory=ThrottlingConfig)
     post_filter: PostFilterConfig = field(default_factory=PostFilterConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    database: DatabaseConfig = field(default_factory=DatabaseConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     profile: ProfileConfig = field(default_factory=ProfileConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
@@ -503,6 +512,20 @@ def _parse_logging_config(data: dict[str, Any]) -> LoggingConfig:
     )
 
 
+def _parse_database_config(data: dict[str, Any]) -> DatabaseConfig:
+    """Parse database configuration from dict with validation."""
+    database_data = data.get("database", {})
+
+    cleanup_days = database_data.get("cleanup_days", 30)
+    if cleanup_days < 1:
+        raise ValueError(f"cleanup_days must be at least 1, got {cleanup_days}")
+
+    return DatabaseConfig(
+        cleanup_enabled=database_data.get("cleanup_enabled", False),
+        cleanup_days=cleanup_days,
+    )
+
+
 def _parse_output_config(data: dict[str, Any]) -> OutputConfig:
     """Parse output configuration from dict."""
     output_data = data.get("output", {})
@@ -665,6 +688,7 @@ def load_config() -> Config:
         throttling=_parse_throttling_config(data),
         post_filter=_parse_post_filter_config(data),
         logging=_parse_logging_config(data),
+        database=_parse_database_config(data),
         output=_parse_output_config(data),
         profile=_parse_profile_config(data),
         scheduler=_parse_scheduler_config(data),
