@@ -295,7 +295,13 @@ class NotificationData:
     updated_jobs_count: int
     avg_score: float
     new_jobs: list[JobDBRecord]  # All new jobs, sorted by score descending
+    top_jobs_overall: list[JobDBRecord]  # Top jobs from entire database
+    total_jobs_in_db: int = 0  # Total number of jobs in database
 ```
+
+**Telegram Notification Sections:**
+- 🆕 **New Jobs** - Jobs found in the current search run (filtered by `min_score_for_notification`)
+- 🏆 **Top Jobs Overall** - Best jobs from entire database (controlled by `include_top_overall` and `max_top_overall`)
 
 ### 5. Database Layer (`database.py`)
 
@@ -521,6 +527,9 @@ notifications:
     chat_ids: ["..."]
     min_score_for_notification: 20
     max_jobs_in_message: 50
+    jobs_per_chunk: 10
+    include_top_overall: true  # Show top jobs from entire database
+    max_top_overall: 10  # Max top jobs to show
 
 # Database maintenance
 database:
@@ -769,6 +778,12 @@ columns = [
 
 ### v3.0.0 (2026-01-01)
 
+**Features:**
+- Top Jobs Overall in Telegram notifications (🆕 New Jobs + 🏆 Top Jobs Overall sections)
+- New `include_top_overall` and `max_top_overall` Telegram config options
+- New database methods: `get_top_jobs(limit, min_score)` and `get_job_count()`
+- Configurable `jobs_per_chunk` (previously hardcoded)
+
 **Fixes:**
 - SQLite batch querying (`SQLITE_VAR_LIMIT = 500`) for large job ID sets
 - Lock duration optimized in deduplication (compute outside lock)
@@ -778,9 +793,8 @@ columns = [
 - Environment variable warning for unresolved Telegram bot token
 
 **Changes:**
-- NotificationData simplified: consolidated `top_jobs`/`all_new_jobs` into single `new_jobs` field
+- NotificationData enhanced with `top_jobs_overall` and `total_jobs_in_db` fields
 - Precompiled regex for MarkdownV2 escaping (performance)
-- JOBS_PER_CHUNK validation via `__init_subclass__`
 - Docker memory limits added to all services
 
 **Removed:**

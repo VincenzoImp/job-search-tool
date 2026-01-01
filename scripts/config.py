@@ -147,7 +147,7 @@ class ScoringConfig:
 class ParallelConfig:
     """Parallelism configuration."""
 
-    max_workers: int = 5
+    max_workers: int = 3  # Conservative default to reduce rate limit risk
 
 
 @dataclass
@@ -155,7 +155,7 @@ class RetryConfig:
     """Retry configuration for handling rate limits."""
 
     max_attempts: int = 3
-    base_delay: float = 2.0
+    base_delay: float = 3.0  # More time between retries for rate limit recovery
     backoff_factor: float = 2.0
 
 
@@ -164,18 +164,18 @@ class ThrottlingConfig:
     """Throttling configuration for rate limit prevention."""
 
     enabled: bool = True
-    default_delay: float = 1.5
+    default_delay: float = 2.0  # Safer default to prevent blocks
     site_delays: dict[str, float] = field(
         default_factory=lambda: {
-            "linkedin": 3.0,
-            "indeed": 1.0,
-            "glassdoor": 1.5,
-            "google": 2.0,
-            "ziprecruiter": 1.5,
+            "linkedin": 4.0,  # LinkedIn is very aggressive with rate limiting
+            "indeed": 1.5,
+            "glassdoor": 2.0,
+            "google": 2.5,
+            "ziprecruiter": 2.0,
         }
     )
     jitter: float = 0.3
-    rate_limit_cooldown: float = 30.0
+    rate_limit_cooldown: float = 60.0  # More time for rate limit recovery
 
     def get_delay(self, site: str) -> float:
         """Get delay for a specific site with jitter applied."""
@@ -212,7 +212,7 @@ class DatabaseConfig:
     """Database configuration."""
 
     cleanup_enabled: bool = False  # Enable automatic cleanup of old jobs
-    cleanup_days: int = 30  # Delete jobs not seen in this many days
+    cleanup_days: int = 60  # Delete jobs not seen in this many days (jobs can stay open long)
     recalculate_scores_on_startup: bool = True  # Recalculate scores on startup
 
 
@@ -261,7 +261,10 @@ class TelegramConfig:
     chat_ids: list[str] = field(default_factory=list)  # Recipients
     send_summary: bool = True  # Send run summary
     min_score_for_notification: int = 0  # Min score to include in notifications
-    max_jobs_in_message: int = 10  # Max jobs to show in message
+    max_jobs_in_message: int = 20  # Max jobs to show in message (more visible before split)
+    jobs_per_chunk: int = 10  # Jobs per Telegram message chunk (Telegram has 4096 char limit)
+    include_top_overall: bool = True  # Include top jobs from entire database (not just new)
+    max_top_overall: int = 10  # Max top jobs from entire database to include
 
 
 @dataclass
@@ -409,7 +412,7 @@ def _parse_parallel_config(data: dict[str, Any]) -> ParallelConfig:
     """Parse parallel configuration from dict with validation."""
     parallel_data = data.get("parallel", {})
 
-    max_workers = parallel_data.get("max_workers", 5)
+    max_workers = parallel_data.get("max_workers", 3)
     if max_workers < 1:
         raise ValueError(f"max_workers must be at least 1, got {max_workers}")
 
@@ -426,7 +429,7 @@ def _parse_retry_config(data: dict[str, Any]) -> RetryConfig:
     if max_attempts < 1:
         raise ValueError(f"max_attempts must be at least 1, got {max_attempts}")
 
-    base_delay = retry_data.get("base_delay", 2.0)
+    base_delay = retry_data.get("base_delay", 3.0)
     if base_delay < 0:
         raise ValueError(f"base_delay cannot be negative, got {base_delay}")
 
@@ -445,7 +448,7 @@ def _parse_throttling_config(data: dict[str, Any]) -> ThrottlingConfig:
     """Parse throttling configuration from dict with validation."""
     throttling_data = data.get("throttling", {})
 
-    default_delay = throttling_data.get("default_delay", 1.5)
+    default_delay = throttling_data.get("default_delay", 2.0)
     if default_delay < 0:
         raise ValueError(f"default_delay cannot be negative, got {default_delay}")
 
@@ -453,7 +456,7 @@ def _parse_throttling_config(data: dict[str, Any]) -> ThrottlingConfig:
     if not 0 <= jitter <= 1.0:
         raise ValueError(f"jitter must be between 0 and 1.0, got {jitter}")
 
-    rate_limit_cooldown = throttling_data.get("rate_limit_cooldown", 30.0)
+    rate_limit_cooldown = throttling_data.get("rate_limit_cooldown", 60.0)
     if rate_limit_cooldown < 0:
         raise ValueError(f"rate_limit_cooldown cannot be negative, got {rate_limit_cooldown}")
 
@@ -461,11 +464,11 @@ def _parse_throttling_config(data: dict[str, Any]) -> ThrottlingConfig:
     site_delays = throttling_data.get(
         "site_delays",
         {
-            "linkedin": 3.0,
-            "indeed": 1.0,
-            "glassdoor": 1.5,
-            "google": 2.0,
-            "ziprecruiter": 1.5,
+            "linkedin": 4.0,
+            "indeed": 1.5,
+            "glassdoor": 2.0,
+            "google": 2.5,
+            "ziprecruiter": 2.0,
         },
     )
     for site, delay in site_delays.items():
@@ -522,7 +525,7 @@ def _parse_database_config(data: dict[str, Any]) -> DatabaseConfig:
     """Parse database configuration from dict with validation."""
     database_data = data.get("database", {})
 
-    cleanup_days = database_data.get("cleanup_days", 30)
+    cleanup_days = database_data.get("cleanup_days", 60)
     if cleanup_days < 1:
         raise ValueError(f"cleanup_days must be at least 1, got {cleanup_days}")
 
@@ -600,9 +603,19 @@ def _parse_telegram_config(data: dict[str, Any]) -> TelegramConfig:
     if min_score < 0:
         raise ValueError(f"min_score_for_notification cannot be negative, got {min_score}")
 
-    max_jobs = telegram_data.get("max_jobs_in_message", 10)
+    max_jobs = telegram_data.get("max_jobs_in_message", 20)
     if max_jobs < 1:
         raise ValueError(f"max_jobs_in_message must be at least 1, got {max_jobs}")
+
+    jobs_per_chunk = telegram_data.get("jobs_per_chunk", 10)
+    if jobs_per_chunk < 1:
+        raise ValueError(f"jobs_per_chunk must be at least 1, got {jobs_per_chunk}")
+    if jobs_per_chunk > 15:
+        raise ValueError(f"jobs_per_chunk must be at most 15 (Telegram 4096 char limit), got {jobs_per_chunk}")
+
+    max_top_overall = telegram_data.get("max_top_overall", 10)
+    if max_top_overall < 1:
+        raise ValueError(f"max_top_overall must be at least 1, got {max_top_overall}")
 
     # Validate chat_ids format
     chat_ids = telegram_data.get("chat_ids", [])
@@ -641,6 +654,9 @@ def _parse_telegram_config(data: dict[str, Any]) -> TelegramConfig:
         send_summary=telegram_data.get("send_summary", True),
         min_score_for_notification=min_score,
         max_jobs_in_message=max_jobs,
+        jobs_per_chunk=jobs_per_chunk,
+        include_top_overall=telegram_data.get("include_top_overall", True),
+        max_top_overall=max_top_overall,
     )
 
 
