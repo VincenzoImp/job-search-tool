@@ -977,9 +977,21 @@ MIT License - See LICENSE file for details.
 
 ---
 
-**Last Updated**: 2025-12-31
+**Last Updated**: 2026-01-01
 
 ## Changelog
+
+### v2.5.2 (2026-01-01) - Score Recalculation on Startup
+
+**NEW:**
+- **Score Recalculation**: All existing jobs in the database now have their relevance scores recalculated on startup using the current scoring configuration
+- This allows changing scoring criteria in `settings.yaml` without losing job history or needing to clear the database
+- Added `recalculate_all_scores()` function in `database.py`
+
+**WORKFLOW IMPROVEMENT:**
+- Modify `settings.yaml` scoring weights/keywords
+- Run `docker compose up` (no rebuild needed - config is mounted as volume)
+- All existing jobs are rescored with the new criteria before the search begins
 
 ### v2.5.1 (2025-12-31) - Docker Build Fix
 
