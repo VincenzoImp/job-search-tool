@@ -19,7 +19,8 @@ import yaml
 
 # Base directory is the project root (parent of scripts/)
 BASE_DIR = Path(__file__).parent.parent.resolve()
-CONFIG_FILE = BASE_DIR / "config" / "settings.yaml"
+# Allow override via environment variable for testing
+CONFIG_FILE = Path(os.environ.get("JOB_SEARCH_CONFIG", BASE_DIR / "config" / "settings.yaml"))
 
 
 @dataclass
