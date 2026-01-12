@@ -776,6 +776,18 @@ columns = [
 
 ## Changelog
 
+### v3.0.2 (2026-01-12)
+
+**Fixes:**
+- Scheduler interval now calculated from run start to start (not end to start)
+- Scheduler handles long-running jobs by skipping to next future slot
+- Telegram notification chunks now sent independently (one failed chunk doesn't stop others)
+- Fixed `next_run_time` attribute error with DateTrigger jobs
+
+**Changes:**
+- Replaced `IntervalTrigger` with `DateTrigger` for precise start-to-start scheduling
+- Added `JOB_SEARCH_CONFIG` environment variable for config file override
+
 ### v3.0.1 (2026-01-01)
 
 **Removed:**
