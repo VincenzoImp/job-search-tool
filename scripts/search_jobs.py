@@ -14,7 +14,6 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Any
 
 import pandas as pd
 from jobspy import scrape_jobs
@@ -31,7 +30,7 @@ from tenacity import (
 from config import Config, get_config
 from database import get_database
 from logger import ProgressLogger, get_logger, log_section, setup_logging
-from models import Job, SearchSummary, generate_job_id
+from models import SearchSummary, generate_job_id
 
 
 # Thread-safe lock for shared data structures
@@ -839,7 +838,7 @@ def main() -> None:
     logger.info(f"Total unique jobs: {summary.unique_jobs}")
     logger.info(f"Highly relevant jobs: {summary.relevant_jobs}")
     logger.info(f"New jobs (first time seen): {summary.new_jobs}")
-    logger.info(f"Check the 'results' folder for detailed CSV and Excel files.")
+    logger.info("Check the 'results' folder for detailed CSV and Excel files.")
 
 
 if __name__ == "__main__":
