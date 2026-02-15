@@ -129,35 +129,22 @@ def _normalize_text(text: str) -> str:
     """
     Normalize text for fuzzy matching.
 
-    Handles common character variations (ü->u, ö->o, etc.) and lowercases.
+    Uses Unicode NFKD normalization to handle all diacritical marks
+    (ü->u, ö->o, é->e, etc.) instead of a manual replacement table.
     """
     if not text:
         return ""
 
-    # Lowercase
-    text = text.lower()
+    import unicodedata
 
-    # Common character normalizations
-    replacements = {
-        "ü": "u",
-        "ö": "o",
-        "ä": "a",
-        "ß": "ss",
-        "é": "e",
-        "è": "e",
-        "ê": "e",
-        "à": "a",
-        "â": "a",
-        "î": "i",
-        "ô": "o",
-        "û": "u",
-        "ç": "c",
-        "ñ": "n",
-    }
-    for orig, replacement in replacements.items():
-        text = text.replace(orig, replacement)
+    # NFKD decomposes characters, then strip combining marks (accents, umlauts, etc.)
+    normalized = unicodedata.normalize("NFKD", text)
+    stripped = "".join(c for c in normalized if not unicodedata.combining(c))
 
-    return text
+    # Handle special ligature that NFKD doesn't decompose to "ss"
+    stripped = stripped.replace("ß", "ss")
+
+    return stripped.lower()
 
 
 def _extract_words(text: str) -> list[str]:
@@ -545,17 +532,17 @@ def search_jobs(config: Config) -> tuple[pd.DataFrame | None, SearchSummary]:
                     # Step 1: Generate keys outside lock (compute-intensive)
                     job_keys = [_generate_job_key(row) for _, row in jobs_df.iterrows()]
 
-                    # Step 2: Quick lock only for set operations
+                    # Step 2: Lock for both set operations AND list append (thread safety)
                     with _jobs_lock:
                         new_indices = [
                             i for i, key in enumerate(job_keys) if key not in seen_jobs
                         ]
                         seen_jobs.update(job_keys[i] for i in new_indices)
 
-                    # Step 3: Build DataFrame outside lock
-                    if new_indices:
-                        new_df = jobs_df.iloc[new_indices].copy()
-                        all_jobs.append(new_df)
+                        # Append inside the lock to prevent concurrent list mutations
+                        if new_indices:
+                            new_df = jobs_df.iloc[new_indices].copy()
+                            all_jobs.append(new_df)
 
                     progress.update(
                         success=True,
@@ -603,32 +590,33 @@ def _generate_job_key(row: pd.Series) -> str:
 
 def filter_relevant_jobs(jobs_df: pd.DataFrame, config: Config) -> pd.DataFrame:
     """
-    Filter jobs based on relevance score.
+    Add relevance scores and filter jobs by threshold.
 
-    Note: This function modifies jobs_df in-place by adding a 'relevance_score' column.
-    The returned DataFrame is a filtered view sorted by score.
+    Creates a copy of the input DataFrame with a 'relevance_score' column added,
+    then filters to only include jobs above the scoring threshold.
 
     Args:
-        jobs_df: DataFrame with all jobs. Will be modified to include relevance_score.
+        jobs_df: DataFrame with all jobs. Not modified.
         config: Configuration with scoring settings.
 
     Returns:
-        Filtered DataFrame with relevant jobs (score > threshold), sorted by score descending.
+        New DataFrame with relevant jobs (score > threshold), sorted by score descending.
+        The original jobs_df is not modified.
     """
     logger = get_logger("filter")
 
     log_section(logger, "FILTERING RELEVANT JOBS")
 
-    # Calculate relevance scores in-place on original DataFrame
-    # (caller should not expect original to be unmodified after this)
-    jobs_df["relevance_score"] = jobs_df.apply(
+    # Work on a copy to avoid modifying the caller's DataFrame
+    scored_df = jobs_df.copy()
+    scored_df["relevance_score"] = scored_df.apply(
         lambda row: calculate_relevance_score(row, config), axis=1
     )
 
-    # Filter by threshold - only copy the filtered subset
+    # Filter by threshold
     threshold = config.scoring.threshold
-    mask = jobs_df["relevance_score"] > threshold
-    relevant_jobs = jobs_df.loc[mask].sort_values("relevance_score", ascending=False)
+    mask = scored_df["relevance_score"] > threshold
+    relevant_jobs = scored_df.loc[mask].sort_values("relevance_score", ascending=False)
 
     logger.info(f"Score threshold: {threshold}")
     logger.info(f"Relevant jobs found: {len(relevant_jobs)}")
