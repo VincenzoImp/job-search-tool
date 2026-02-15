@@ -49,7 +49,7 @@ class SearchConfig:
 
     # Output format parameters
     enforce_annual_salary: bool = True  # Convert all salaries to yearly
-    description_format: str = "markdown"  # markdown, html, plain
+    description_format: str = "markdown"  # markdown, html, or plain
     verbose: int = 1  # 0=errors, 1=warnings, 2=all logs
 
     # LinkedIn-specific parameters
@@ -251,6 +251,7 @@ class SchedulerConfig:
     run_on_startup: bool = True  # Execute immediately on startup
     retry_on_failure: bool = True  # Retry if search fails
     retry_delay_minutes: int = 30  # Wait time before retry
+    max_retries: int = 3  # Maximum consecutive retries before giving up (0 = unlimited)
 
 
 @dataclass
@@ -331,6 +332,18 @@ def _load_yaml() -> dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
+_VALID_DESCRIPTION_FORMATS = {"markdown", "html", "plain"}
+
+
+def _validate_description_format(fmt: str) -> str:
+    """Validate description_format value."""
+    if fmt not in _VALID_DESCRIPTION_FORMATS:
+        raise ValueError(
+            f"description_format must be one of {_VALID_DESCRIPTION_FORMATS}, got '{fmt}'"
+        )
+    return fmt
+
+
 def _parse_search_config(data: dict[str, Any]) -> SearchConfig:
     """Parse search configuration from dict with validation."""
     search_data = data.get("search", {})
@@ -374,7 +387,7 @@ def _parse_search_config(data: dict[str, Any]) -> SearchConfig:
         country_indeed=search_data.get("country_indeed", "USA"),
         # Output format parameters
         enforce_annual_salary=search_data.get("enforce_annual_salary", True),
-        description_format=search_data.get("description_format", "markdown"),
+        description_format=_validate_description_format(search_data.get("description_format", "markdown")),
         verbose=verbose,
         # LinkedIn-specific parameters
         linkedin_fetch_description=search_data.get("linkedin_fetch_description", True),
@@ -581,12 +594,17 @@ def _parse_scheduler_config(data: dict[str, Any]) -> SchedulerConfig:
     if retry_delay_minutes < 0:
         raise ValueError(f"retry_delay_minutes cannot be negative, got {retry_delay_minutes}")
 
+    max_retries = scheduler_data.get("max_retries", 3)
+    if max_retries < 0:
+        raise ValueError(f"max_retries cannot be negative, got {max_retries}")
+
     return SchedulerConfig(
         enabled=scheduler_data.get("enabled", False),
         interval_hours=interval_hours,
         run_on_startup=scheduler_data.get("run_on_startup", True),
         retry_on_failure=scheduler_data.get("retry_on_failure", True),
         retry_delay_minutes=retry_delay_minutes,
+        max_retries=max_retries,
     )
 
 
@@ -744,6 +762,44 @@ def load_config() -> Config:
         scheduler=_parse_scheduler_config(data),
         notifications=_parse_notifications_config(data),
     )
+
+    # Cross-section validation: scoring weights vs keywords
+    weight_keys = set(config.scoring.weights.keys())
+    keyword_keys = set(config.scoring.keywords.keys())
+    weights_without_keywords = weight_keys - keyword_keys
+    keywords_without_weights = keyword_keys - weight_keys
+    if weights_without_keywords:
+        import warnings
+        warnings.warn(
+            f"Scoring categories have weights but no keywords: {weights_without_keywords}. "
+            "These categories will never match.",
+            UserWarning,
+        )
+    if keywords_without_weights:
+        import warnings
+        warnings.warn(
+            f"Scoring categories have keywords but no weights: {keywords_without_weights}. "
+            "These categories will match but contribute 0 to the score.",
+            UserWarning,
+        )
+
+    # Warn if bot_token appears to be a raw token in the config file
+    telegram = config.notifications.telegram
+    if (
+        telegram.enabled
+        and telegram.bot_token
+        and not telegram.bot_token.startswith("$")
+        and not os.environ.get("TELEGRAM_BOT_TOKEN")
+    ):
+        # Check if the token looks like a real Telegram bot token (digits:alphanumeric)
+        import re
+        if re.match(r"^\d+:[A-Za-z0-9_-]+$", telegram.bot_token):
+            import warnings
+            warnings.warn(
+                "Telegram bot_token appears to be hardcoded in config file. "
+                "Consider using environment variable TELEGRAM_BOT_TOKEN or $VAR_NAME syntax.",
+                UserWarning,
+            )
 
     # Ensure directories exist
     config.results_path.mkdir(parents=True, exist_ok=True)
