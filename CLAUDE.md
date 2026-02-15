@@ -83,18 +83,27 @@ job-search-tool/
 │   └── healthcheck.py             # Docker health verification
 │
 ├── tests/
-│   ├── conftest.py                # Pytest fixtures
+│   ├── conftest.py                # Pytest fixtures + global state reset
 │   ├── test_models.py             # Model tests
 │   ├── test_config.py             # Configuration tests
 │   ├── test_database.py           # Database tests
-│   └── test_scoring.py            # Scoring tests
+│   ├── test_scoring.py            # Scoring calculation, fuzzy matching
+│   ├── test_main.py               # Entry point tests
+│   ├── test_notifier.py           # Notification tests
+│   ├── test_scheduler.py          # Scheduler tests
+│   └── test_logger.py             # Logger tests
+│
+├── .github/
+│   └── workflows/
+│       └── ci.yml                 # CI pipeline (test, audit, Docker)
 │
 ├── results/                        # CSV/Excel output (gitignored)
 ├── data/                           # SQLite database (gitignored)
 ├── logs/                           # Log files (gitignored)
 │
-├── Dockerfile                      # Container definition
+├── Dockerfile                      # Multi-stage build, non-root user
 ├── docker-compose.yml              # Service orchestration
+├── .pre-commit-config.yaml         # Pre-commit hooks (ruff, etc.)
 ├── requirements.txt                # Production dependencies
 ├── requirements-dev.txt            # Development dependencies
 └── pytest.ini                      # Test configuration
@@ -242,7 +251,8 @@ class JobSearchScheduler:
 
 - Configurable interval (default: 24 hours)
 - Optional immediate execution on startup
-- Retry logic on failure with configurable delay
+- Retry logic on failure with configurable delay and max retry limit
+- Consecutive failure tracking (`_consecutive_failures` counter)
 - Signal handling for graceful shutdown (SIGINT, SIGTERM)
 
 ### 4. Notification System (`notifier.py`)
@@ -305,7 +315,9 @@ class NotificationData:
 
 ### 5. Database Layer (`database.py`)
 
-SQLite persistence with automatic migration support.
+SQLite persistence with automatic migration support. Uses WAL journal mode
+and `busy_timeout=5000` for improved concurrency. Maintains a persistent
+connection (reused across calls) with context manager support (`with db:`).
 
 ```python
 class JobDatabase:
@@ -394,6 +406,13 @@ All numeric parameters are validated:
 - `backoff_factor >= 1.0`
 - `jitter` between 0 and 1.0
 - `cleanup_days >= 1`
+- `max_retries >= 0` (0 = unlimited)
+- `description_format` must be `markdown`, `html`, or `plain`
+
+**Cross-Section Validation (warnings):**
+- Categories in `weights` without matching `keywords` (will never match)
+- Categories in `keywords` without matching `weights` (will contribute 0)
+- Hardcoded `bot_token` in config file (recommends env var)
 
 ### 7. Data Models (`models.py`)
 
@@ -517,6 +536,7 @@ scheduler:
   enabled: true
   interval_hours: 24
   run_on_startup: true
+  max_retries: 3          # Max consecutive retries (0 = unlimited)
 
 # Notifications
 notifications:
@@ -548,10 +568,10 @@ output:
 
 The scoring system is fully configuration-driven:
 
-1. Category names in `weights` must match those in `keywords`
+1. Category names in `weights` must match those in `keywords` (mismatches emit warnings)
 2. Weights can be positive (bonus) or negative (penalty)
 3. Unknown categories default to weight 0
-4. All matching is case-insensitive
+4. All matching is case-insensitive with Unicode normalization (NFKD)
 
 ---
 
@@ -671,11 +691,15 @@ def _parse_new_section_config(data: dict) -> NewSectionConfig:
 
 ```
 tests/
-├── conftest.py          # Shared fixtures
+├── conftest.py          # Shared fixtures + global state reset (autouse)
 ├── test_models.py       # Job ID, dataclass conversions
 ├── test_config.py       # Configuration validation
 ├── test_database.py     # CRUD, deduplication, statistics
-└── test_scoring.py      # Scoring calculation, fuzzy matching
+├── test_scoring.py      # Scoring calculation, fuzzy matching
+├── test_main.py         # Entry point (run_job_search, main)
+├── test_notifier.py     # Notification formatting, sending, chunking
+├── test_scheduler.py    # Scheduler lifecycle, retry logic
+└── test_logger.py       # Logger setup, formatting, colors
 ```
 
 ### Running Tests
@@ -702,9 +726,15 @@ pytest tests/test_models.py::test_job_id_generation -v
 | Module | Tests | Coverage |
 |--------|-------|----------|
 | models.py | 13 | Job ID, conversions |
-| config.py | 29 | All validation |
-| database.py | 18 | CRUD, dedup, stats |
+| config.py | 32 | All validation, cross-section |
+| database.py | 21 | CRUD, dedup, stats, top jobs |
+| main.py | 7 | run_job_search, main, recalc |
+| notifier.py | 22 | Formatting, sending, chunking |
+| scheduler.py | 15 | Lifecycle, retry, signals |
+| logger.py | 17 | Setup, formatting, colors |
 | scoring | varies | Requires rapidfuzz |
+
+Total: **160 tests** (excluding test_scoring when rapidfuzz not installed).
 
 ---
 
@@ -729,7 +759,9 @@ pytest tests/test_models.py::test_job_id_generation -v
 
 - SHA256 job IDs for O(1) deduplication
 - Batch inserts via `save_jobs_from_dataframe()`
-- Connection context managers for proper cleanup
+- Persistent connection (reused across calls, auto-reconnect on error)
+- WAL journal mode for concurrent read/write performance
+- `busy_timeout=5000` to handle lock contention
 
 ---
 
@@ -775,6 +807,40 @@ columns = [
 ---
 
 ## Changelog
+
+### v3.1.0 (2026-02-15)
+
+**Security & Infrastructure:**
+- Multi-stage Dockerfile with non-root user (`appuser`, UID 1000)
+- GitHub Actions CI pipeline (test matrix Python 3.11/3.12, pip-audit, Docker build)
+- Pre-commit hooks (ruff lint/format, trailing whitespace, detect-private-key)
+- Removed `./scripts` volume mount from docker-compose (was overriding built image)
+- Added `env_file: .env` (optional) to all docker-compose services
+
+**Stability Fixes:**
+- SQLite WAL mode + `busy_timeout=5000` for concurrent access
+- Persistent database connection (reused across calls, auto-reconnect on error)
+- Thread-safe deduplication (`append` inside lock in search_jobs.py)
+- `filter_relevant_jobs` now works on a copy (no side-effect on input DataFrame)
+- Unicode text normalization via `unicodedata.normalize("NFKD")` (replaces manual table)
+- Null-safe formatting in Telegram notifications (title, relevance_score)
+- Improved async/sync bridge using `new_event_loop()` in separate thread
+
+**Configuration Validation:**
+- Cross-section validation: warns on weight/keyword category mismatches
+- `description_format` validated against `{markdown, html, plain}`
+- Warning when bot_token is hardcoded in config file
+- New `scheduler.max_retries` (default: 3, 0 = unlimited)
+
+**Scheduler:**
+- Consecutive failure counter (`_consecutive_failures`)
+- Max retry limit (`max_retries`) stops retries after N consecutive failures
+
+**Testing:**
+- New `test_main.py` (7 tests for entry point)
+- Config singleton reset fixture (`autouse`) in conftest.py
+- Updated `.gitignore` with `.env`, `.ruff_cache/`, `docker-compose.override.yml`
+- Total: 160 tests passing
 
 ### v3.0.2 (2026-01-12)
 
@@ -896,4 +962,4 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
-*Last Updated: 2026-01-01*
+*Last Updated: 2026-02-15*
