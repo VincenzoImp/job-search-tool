@@ -923,6 +923,14 @@ columns = [
 
 ## Changelog
 
+### v4.1.1 (2026-03-13)
+
+**Fixes:**
+- Dashboard port binding opened to all interfaces for broader network accessibility
+- Logger file handler gracefully handles `PermissionError`, falling back to console-only logging instead of crashing
+- Suppressed noisy JobSpy and ChromaDB third-party logs from console output
+- Upstream library errors logged as single-line warnings instead of full tracebacks
+
 ### v4.1.0 (2026-03-13)
 
 **Features:**

@@ -228,9 +228,9 @@ def search_single_query(
         logger.error(f"Query failed: {query} @ {location}: {error_msg}")
         return query, location, None, error_msg
     except Exception as e:
-        # Catch-all for truly unexpected errors - log with full details
+        # Catch-all for unexpected errors (e.g. upstream JobSpy bugs)
         error_msg = f"Unexpected error ({type(e).__name__}): {e}"
-        logger.error(f"Query failed: {query} @ {location}: {error_msg}", exc_info=True)
+        logger.warning(f"Query failed: {query} @ {location}: {error_msg}")
         return query, location, None, error_msg
 
 
