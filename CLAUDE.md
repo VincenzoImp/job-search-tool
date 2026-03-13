@@ -59,6 +59,8 @@ The Job Search Tool is an automated job aggregation platform built on the [JobSp
 | Retry Logic | Tenacity | Exponential backoff |
 | Fuzzy Matching | rapidfuzz | Post-filter validation |
 | Excel Output | OpenPyXL | Formatted spreadsheet generation |
+| Vector Search | ChromaDB | Semantic job similarity search |
+| Embeddings | sentence-transformers | Local text-to-vector encoding |
 
 ### Project Structure
 
@@ -80,6 +82,10 @@ job-search-tool/
 │   ├── database.py                # SQLite operations
 │   ├── models.py                  # Data structures
 │   ├── logger.py                  # Logging setup
+│   ├── scoring.py                 # Relevance scoring engine
+│   ├── exporter.py                # CSV/Excel export with formula injection protection
+│   ├── vector_store.py            # ChromaDB vector store for semantic search
+│   ├── vector_commands.py         # Vector store backfill and sync utilities
 │   └── healthcheck.py             # Docker health verification
 │
 ├── tests/
@@ -91,7 +97,13 @@ job-search-tool/
 │   ├── test_main.py               # Entry point tests
 │   ├── test_notifier.py           # Notification tests
 │   ├── test_scheduler.py          # Scheduler tests
-│   └── test_logger.py             # Logger tests
+│   ├── test_logger.py             # Logger tests
+│   ├── test_exporter.py           # Export and sanitization tests
+│   ├── test_healthcheck.py        # Health check tests
+│   ├── test_report_generator.py   # Report generation tests
+│   ├── test_analyze_jobs.py       # Analysis utility tests
+│   ├── test_search_jobs.py        # Search engine tests
+│   └── test_vector_store.py       # Vector store tests
 │
 ├── .github/
 │   └── workflows/
@@ -181,6 +193,30 @@ class ThrottledExecutor:
 **Key Functions:**
 
 ```python
+def search_jobs(config: Config) -> tuple[pd.DataFrame | None, SearchSummary]:
+    """
+    Execute parallel job search across all sites and locations.
+
+    Features:
+    - Parallel query execution via ThreadPoolExecutor
+    - Per-site throttling with jitter
+    - Incremental deduplication during collection
+    - Retry logic with exponential backoff
+
+    Returns:
+        Tuple of (combined DataFrame, SearchSummary).
+    """
+```
+
+> **Note:** `calculate_relevance_score` and `filter_relevant_jobs` have been extracted to `scoring.py`. `save_results` has been extracted to `exporter.py`.
+
+### 2a. Scoring Engine (`scoring.py`)
+
+Relevance scoring engine, extracted from `search_jobs.py`.
+
+**Key Functions:**
+
+```python
 def calculate_relevance_score(row: pd.Series, config: Config) -> int:
     """
     Calculate job relevance score.
@@ -199,20 +235,6 @@ def calculate_relevance_score(row: pd.Series, config: Config) -> int:
         Integer score (can be negative if 'avoid' categories match).
     """
 
-def search_jobs(config: Config) -> tuple[pd.DataFrame | None, SearchSummary]:
-    """
-    Execute parallel job search across all sites and locations.
-
-    Features:
-    - Parallel query execution via ThreadPoolExecutor
-    - Per-site throttling with jitter
-    - Incremental deduplication during collection
-    - Retry logic with exponential backoff
-
-    Returns:
-        Tuple of (combined DataFrame, SearchSummary).
-    """
-
 def filter_relevant_jobs(df: pd.DataFrame, config: Config) -> pd.DataFrame:
     """
     Filter jobs by relevance score threshold.
@@ -223,6 +245,24 @@ def filter_relevant_jobs(df: pd.DataFrame, config: Config) -> pd.DataFrame:
 
     Returns:
         Filtered and sorted DataFrame.
+    """
+```
+
+### 2b. Exporter (`exporter.py`)
+
+CSV/Excel export with formula injection protection, extracted from `search_jobs.py`.
+
+**Key Functions:**
+
+```python
+def save_results(df: pd.DataFrame, config: Config) -> None:
+    """
+    Save search results to CSV and/or Excel.
+
+    Features:
+    - Formula injection protection (sanitizes cell values)
+    - Formatted Excel output via OpenPyXL
+    - Configurable output directory
     """
 ```
 
@@ -332,6 +372,10 @@ class JobDatabase:
         get_new_job_ids(job_ids) -> set[str]
         filter_new_jobs(df) -> pd.DataFrame
         mark_as_applied(job_id) -> bool
+        delete_job(job_id) -> bool
+        delete_jobs(job_ids) -> int
+        toggle_bookmark(job_id) -> bool
+        get_job_by_id(job_id) -> JobDBRecord | None
         get_statistics() -> dict
         export_to_dataframe() -> pd.DataFrame
     """
@@ -382,6 +426,7 @@ class Config:
     profile: ProfileConfig
     scheduler: SchedulerConfig
     notifications: NotificationsConfig
+    vector_search: VectorSearchConfig
 ```
 
 **Key Functions:**
@@ -419,7 +464,7 @@ All numeric parameters are validated:
 Type-safe dataclasses for data structures.
 
 ```python
-@dataclass
+@dataclass(frozen=True)
 class Job:
     """
     Single job listing.
@@ -432,17 +477,62 @@ class Job:
         to_dict() -> dict
     """
 
-@dataclass
+@dataclass(frozen=True)
 class JobDBRecord:
     """Database record with all columns."""
+    # ...
+    bookmarked: bool = False
 
-@dataclass
+@dataclass(frozen=True)
 class SearchResult:
     """Results from a single query."""
 
 @dataclass
 class SearchSummary:
     """Statistics for complete search run."""
+```
+
+### 8. Vector Store (`vector_store.py`)
+
+ChromaDB-based vector store for semantic job similarity search.
+
+```python
+class JobVectorStore:
+    """
+    Vector store for semantic job search using ChromaDB.
+
+    Methods:
+        embed_jobs(jobs: list[JobDBRecord]) -> int
+        search_similar(query: str, n_results: int) -> list[JobDBRecord]
+        delete_jobs(job_ids: list[str]) -> None
+        get_collection_count() -> int
+    """
+```
+
+### 9. Vector Commands (`vector_commands.py`)
+
+Utilities for backfilling and syncing the vector store.
+
+```python
+def backfill_embeddings(db: JobDatabase, config: Config) -> int:
+    """
+    Backfill vector embeddings for all jobs in the database.
+
+    Called once at startup when vector_search is enabled.
+
+    Returns:
+        Number of jobs embedded.
+    """
+
+def embed_new_jobs(jobs: list[JobDBRecord], config: Config) -> int:
+    """
+    Embed newly discovered jobs into the vector store.
+
+    Called after each search iteration when vector_search is enabled.
+
+    Returns:
+        Number of jobs embedded.
+    """
 ```
 
 ---
@@ -469,7 +559,8 @@ CREATE TABLE jobs (
     first_seen DATE NOT NULL,           -- When first discovered
     last_seen DATE NOT NULL,            -- Most recent occurrence
     relevance_score INTEGER DEFAULT 0,
-    applied BOOLEAN DEFAULT FALSE
+    applied BOOLEAN DEFAULT FALSE,
+    bookmarked BOOLEAN DEFAULT FALSE
 )
 ```
 
@@ -562,6 +653,16 @@ output:
   data_dir: "data"
   save_csv: true
   save_excel: true
+
+# Vector search (semantic similarity)
+vector_search:
+  enabled: true
+  model_name: "all-MiniLM-L6-v2"
+  persist_dir: "data/chroma"
+  embed_on_save: true
+  default_results: 20
+  backfill_on_startup: true
+  batch_size: 100
 ```
 
 ### Dynamic Scoring
@@ -585,6 +686,7 @@ main()
 ├── Setup logging
 ├── Get database connection
 ├── recalculate_all_scores()     # Once at startup
+├── backfill_embeddings()       # Once at startup (if vector_search enabled)
 ├── Create scheduler
 └── scheduler.start() or scheduler.run_once()
 ```
@@ -608,6 +710,7 @@ run_job_search()
 │   └── Sort by score descending
 ├── save_results()               # CSV/Excel (if enabled)
 ├── db.save_jobs_from_dataframe()
+├── embed_new_jobs()            # Vector store (if enabled)
 └── _send_notifications()        # For new jobs only
 ```
 
@@ -691,15 +794,21 @@ def _parse_new_section_config(data: dict) -> NewSectionConfig:
 
 ```
 tests/
-├── conftest.py          # Shared fixtures + global state reset (autouse)
-├── test_models.py       # Job ID, dataclass conversions
-├── test_config.py       # Configuration validation
-├── test_database.py     # CRUD, deduplication, statistics
-├── test_scoring.py      # Scoring calculation, fuzzy matching
-├── test_main.py         # Entry point (run_job_search, main)
-├── test_notifier.py     # Notification formatting, sending, chunking
-├── test_scheduler.py    # Scheduler lifecycle, retry logic
-└── test_logger.py       # Logger setup, formatting, colors
+├── conftest.py              # Shared fixtures + global state reset (autouse)
+├── test_models.py           # Job ID, dataclass conversions
+├── test_config.py           # Configuration validation
+├── test_database.py         # CRUD, deduplication, statistics
+├── test_scoring.py          # Scoring calculation, fuzzy matching
+├── test_main.py             # Entry point (run_job_search, main)
+├── test_notifier.py         # Notification formatting, sending, chunking
+├── test_scheduler.py        # Scheduler lifecycle, retry logic
+├── test_logger.py           # Logger setup, formatting, colors
+├── test_exporter.py         # Export and sanitization tests
+├── test_healthcheck.py      # Health check tests
+├── test_report_generator.py # Report generation tests
+├── test_analyze_jobs.py     # Analysis utility tests
+├── test_search_jobs.py      # Search engine tests
+└── test_vector_store.py     # Vector store tests
 ```
 
 ### Running Tests
@@ -733,8 +842,14 @@ pytest tests/test_models.py::test_job_id_generation -v
 | scheduler.py | 15 | Lifecycle, retry, signals |
 | logger.py | 17 | Setup, formatting, colors |
 | scoring | varies | Requires rapidfuzz |
+| exporter.py | 14 | Export and sanitization |
+| search_jobs.py | 20 | Search engine |
+| healthcheck.py | 12 | Health check |
+| report_generator.py | 16 | Report generation |
+| analyze_jobs.py | 16 | Analysis utilities |
+| vector_store.py | 34 | Vector store |
 
-Total: **160 tests** (excluding test_scoring when rapidfuzz not installed).
+Total: **~324 tests**.
 
 ---
 
@@ -807,6 +922,22 @@ columns = [
 ---
 
 ## Changelog
+
+### v4.0.0 (2026-03-13)
+
+**Major Changes:**
+- Codebase restructuring: extracted `scoring.py` and `exporter.py` from `search_jobs.py`
+- Semantic vector search via ChromaDB + sentence-transformers (`vector_store.py`, `vector_commands.py`)
+- Unified "Job Search Hub" dashboard (replaces old dashboard)
+- Bookmark and delete job functionality in database layer
+- Frozen dataclasses (`@dataclass(frozen=True)`) for `Job`, `JobDBRecord`, `SearchResult` immutability
+- Formula injection protection in Excel exports
+
+**Testing & CI:**
+- 324 tests (was 160)
+- CI coverage threshold raised to 60%
+- Pre-commit hooks integrated into CI
+- New test files: `test_exporter.py`, `test_search_jobs.py`, `test_healthcheck.py`, `test_report_generator.py`, `test_analyze_jobs.py`, `test_vector_store.py`
 
 ### v3.1.0 (2026-02-15)
 
@@ -962,4 +1093,4 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
-*Last Updated: 2026-02-15*
+*Last Updated: 2026-03-13*
