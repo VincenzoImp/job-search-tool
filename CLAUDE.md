@@ -923,6 +923,16 @@ columns = [
 
 ## Changelog
 
+### v4.1.0 (2026-03-13)
+
+**Features:**
+- Unapply functionality: `toggle_applied()` and `mark_as_unapplied()` in database API
+- Dashboard: toggle apply/unapply per job card, bulk unapply button in DB management
+
+**Fixes:**
+- Streamlit server address changed to `0.0.0.0` inside Docker container for host accessibility
+- Updated `settings.example.yaml` default location
+
 ### v4.0.0 (2026-03-13)
 
 **Major Changes:**
