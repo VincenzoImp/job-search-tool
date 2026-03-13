@@ -7,8 +7,10 @@ Provides type-safe access to all configuration values.
 
 from __future__ import annotations
 
+import logging
 import os
 import random
+import re
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,11 +18,35 @@ from typing import Any
 
 import yaml
 
+logger = logging.getLogger("job_search.config")
+
+
+def _validate_positive_int(value: int, name: str, default: int) -> int:
+    """
+    Validate that a value is a positive integer.
+
+    Args:
+        value: The value to validate.
+        name: Parameter name for error messages.
+        default: Default value (unused, but documents intent).
+
+    Returns:
+        The validated value.
+
+    Raises:
+        ValueError: If value is less than 1.
+    """
+    if value < 1:
+        raise ValueError(f"{name} must be at least 1, got {value}")
+    return value
+
 
 # Base directory is the project root (parent of scripts/)
 BASE_DIR = Path(__file__).parent.parent.resolve()
 # Allow override via environment variable for testing
-CONFIG_FILE = Path(os.environ.get("JOB_SEARCH_CONFIG", BASE_DIR / "config" / "settings.yaml"))
+CONFIG_FILE = Path(
+    os.environ.get("JOB_SEARCH_CONFIG", BASE_DIR / "config" / "settings.yaml")
+)
 
 
 @dataclass
@@ -205,7 +231,9 @@ class LoggingConfig:
     file: str = "logs/search.log"
     max_size_mb: int = 10
     backup_count: int = 5
-    timezone: str = "UTC"  # Timezone for log timestamps (e.g., "Europe/Zurich", "America/New_York")
+    timezone: str = (
+        "UTC"  # Timezone for log timestamps (e.g., "Europe/Zurich", "America/New_York")
+    )
 
 
 @dataclass
@@ -213,7 +241,9 @@ class DatabaseConfig:
     """Database configuration."""
 
     cleanup_enabled: bool = False  # Enable automatic cleanup of old jobs
-    cleanup_days: int = 60  # Delete jobs not seen in this many days (jobs can stay open long)
+    cleanup_days: int = (
+        60  # Delete jobs not seen in this many days (jobs can stay open long)
+    )
     recalculate_scores_on_startup: bool = True  # Recalculate scores on startup
 
 
@@ -263,9 +293,15 @@ class TelegramConfig:
     chat_ids: list[str] = field(default_factory=list)  # Recipients
     send_summary: bool = True  # Send run summary
     min_score_for_notification: int = 0  # Min score to include in notifications
-    max_jobs_in_message: int = 20  # Max jobs to show in message (more visible before split)
-    jobs_per_chunk: int = 10  # Jobs per Telegram message chunk (Telegram has 4096 char limit)
-    include_top_overall: bool = True  # Include top jobs from entire database (not just new)
+    max_jobs_in_message: int = (
+        20  # Max jobs to show in message (more visible before split)
+    )
+    jobs_per_chunk: int = (
+        10  # Jobs per Telegram message chunk (Telegram has 4096 char limit)
+    )
+    include_top_overall: bool = (
+        True  # Include top jobs from entire database (not just new)
+    )
     max_top_overall: int = 10  # Max top jobs from entire database to include
 
 
@@ -387,7 +423,9 @@ def _parse_search_config(data: dict[str, Any]) -> SearchConfig:
         country_indeed=search_data.get("country_indeed", "USA"),
         # Output format parameters
         enforce_annual_salary=search_data.get("enforce_annual_salary", True),
-        description_format=_validate_description_format(search_data.get("description_format", "markdown")),
+        description_format=_validate_description_format(
+            search_data.get("description_format", "markdown")
+        ),
         verbose=verbose,
         # LinkedIn-specific parameters
         linkedin_fetch_description=search_data.get("linkedin_fetch_description", True),
@@ -426,9 +464,9 @@ def _parse_parallel_config(data: dict[str, Any]) -> ParallelConfig:
     """Parse parallel configuration from dict with validation."""
     parallel_data = data.get("parallel", {})
 
-    max_workers = parallel_data.get("max_workers", 3)
-    if max_workers < 1:
-        raise ValueError(f"max_workers must be at least 1, got {max_workers}")
+    max_workers = _validate_positive_int(
+        parallel_data.get("max_workers", 3), "max_workers", 3
+    )
 
     return ParallelConfig(
         max_workers=max_workers,
@@ -439,9 +477,9 @@ def _parse_retry_config(data: dict[str, Any]) -> RetryConfig:
     """Parse retry configuration from dict with validation."""
     retry_data = data.get("retry", {})
 
-    max_attempts = retry_data.get("max_attempts", 3)
-    if max_attempts < 1:
-        raise ValueError(f"max_attempts must be at least 1, got {max_attempts}")
+    max_attempts = _validate_positive_int(
+        retry_data.get("max_attempts", 3), "max_attempts", 3
+    )
 
     base_delay = retry_data.get("base_delay", 3.0)
     if base_delay < 0:
@@ -472,7 +510,9 @@ def _parse_throttling_config(data: dict[str, Any]) -> ThrottlingConfig:
 
     rate_limit_cooldown = throttling_data.get("rate_limit_cooldown", 60.0)
     if rate_limit_cooldown < 0:
-        raise ValueError(f"rate_limit_cooldown cannot be negative, got {rate_limit_cooldown}")
+        raise ValueError(
+            f"rate_limit_cooldown cannot be negative, got {rate_limit_cooldown}"
+        )
 
     # Validate site_delays
     site_delays = throttling_data.get(
@@ -504,7 +544,9 @@ def _parse_post_filter_config(data: dict[str, Any]) -> PostFilterConfig:
 
     min_similarity = post_filter_data.get("min_similarity", 80)
     if not 0 <= min_similarity <= 100:
-        raise ValueError(f"min_similarity must be between 0 and 100, got {min_similarity}")
+        raise ValueError(
+            f"min_similarity must be between 0 and 100, got {min_similarity}"
+        )
 
     return PostFilterConfig(
         enabled=post_filter_data.get("enabled", True),
@@ -518,9 +560,9 @@ def _parse_logging_config(data: dict[str, Any]) -> LoggingConfig:
     """Parse logging configuration from dict with validation."""
     logging_data = data.get("logging", {})
 
-    max_size_mb = logging_data.get("max_size_mb", 10)
-    if max_size_mb <= 0:
-        raise ValueError(f"max_size_mb must be positive, got {max_size_mb}")
+    max_size_mb = _validate_positive_int(
+        logging_data.get("max_size_mb", 10), "max_size_mb", 10
+    )
 
     backup_count = logging_data.get("backup_count", 5)
     if backup_count < 0:
@@ -539,14 +581,16 @@ def _parse_database_config(data: dict[str, Any]) -> DatabaseConfig:
     """Parse database configuration from dict with validation."""
     database_data = data.get("database", {})
 
-    cleanup_days = database_data.get("cleanup_days", 60)
-    if cleanup_days < 1:
-        raise ValueError(f"cleanup_days must be at least 1, got {cleanup_days}")
+    cleanup_days = _validate_positive_int(
+        database_data.get("cleanup_days", 60), "cleanup_days", 60
+    )
 
     return DatabaseConfig(
         cleanup_enabled=database_data.get("cleanup_enabled", False),
         cleanup_days=cleanup_days,
-        recalculate_scores_on_startup=database_data.get("recalculate_scores_on_startup", True),
+        recalculate_scores_on_startup=database_data.get(
+            "recalculate_scores_on_startup", True
+        ),
     )
 
 
@@ -586,13 +630,15 @@ def _parse_scheduler_config(data: dict[str, Any]) -> SchedulerConfig:
     """Parse scheduler configuration from dict with validation."""
     scheduler_data = data.get("scheduler", {})
 
-    interval_hours = scheduler_data.get("interval_hours", 24)
-    if interval_hours <= 0:
-        raise ValueError(f"interval_hours must be positive, got {interval_hours}")
+    interval_hours = _validate_positive_int(
+        scheduler_data.get("interval_hours", 24), "interval_hours", 24
+    )
 
     retry_delay_minutes = scheduler_data.get("retry_delay_minutes", 30)
     if retry_delay_minutes < 0:
-        raise ValueError(f"retry_delay_minutes cannot be negative, got {retry_delay_minutes}")
+        raise ValueError(
+            f"retry_delay_minutes cannot be negative, got {retry_delay_minutes}"
+        )
 
     max_retries = scheduler_data.get("max_retries", 3)
     if max_retries < 0:
@@ -620,21 +666,25 @@ def _parse_telegram_config(data: dict[str, Any]) -> TelegramConfig:
 
     min_score = telegram_data.get("min_score_for_notification", 0)
     if min_score < 0:
-        raise ValueError(f"min_score_for_notification cannot be negative, got {min_score}")
+        raise ValueError(
+            f"min_score_for_notification cannot be negative, got {min_score}"
+        )
 
-    max_jobs = telegram_data.get("max_jobs_in_message", 20)
-    if max_jobs < 1:
-        raise ValueError(f"max_jobs_in_message must be at least 1, got {max_jobs}")
+    max_jobs = _validate_positive_int(
+        telegram_data.get("max_jobs_in_message", 20), "max_jobs_in_message", 20
+    )
 
-    jobs_per_chunk = telegram_data.get("jobs_per_chunk", 10)
-    if jobs_per_chunk < 1:
-        raise ValueError(f"jobs_per_chunk must be at least 1, got {jobs_per_chunk}")
+    jobs_per_chunk = _validate_positive_int(
+        telegram_data.get("jobs_per_chunk", 10), "jobs_per_chunk", 10
+    )
     if jobs_per_chunk > 15:
-        raise ValueError(f"jobs_per_chunk must be at most 15 (Telegram 4096 char limit), got {jobs_per_chunk}")
+        raise ValueError(
+            f"jobs_per_chunk must be at most 15 (Telegram 4096 char limit), got {jobs_per_chunk}"
+        )
 
-    max_top_overall = telegram_data.get("max_top_overall", 10)
-    if max_top_overall < 1:
-        raise ValueError(f"max_top_overall must be at least 1, got {max_top_overall}")
+    max_top_overall = _validate_positive_int(
+        telegram_data.get("max_top_overall", 10), "max_top_overall", 10
+    )
 
     # Validate chat_ids format
     chat_ids = telegram_data.get("chat_ids", [])
@@ -658,16 +708,23 @@ def _parse_telegram_config(data: dict[str, Any]) -> TelegramConfig:
         env_var_name = bot_token.lstrip("$").strip("{}")
         resolved_token = os.environ.get(env_var_name, "")
         if not resolved_token:
-            import warnings
-            warnings.warn(
+            logger.warning(
                 f"Environment variable '{env_var_name}' is not set. "
-                "Telegram notifications will be disabled.",
-                UserWarning,
+                "Telegram notifications will be disabled."
             )
         bot_token = resolved_token
 
+    # Fail-fast: if Telegram is enabled but bot_token is empty, raise an error
+    telegram_enabled = telegram_data.get("enabled", False)
+    if telegram_enabled and not bot_token:
+        raise ValueError(
+            "Telegram notifications are enabled but bot_token is empty. "
+            "Set the TELEGRAM_BOT_TOKEN environment variable or configure "
+            "bot_token in settings.yaml."
+        )
+
     return TelegramConfig(
-        enabled=telegram_data.get("enabled", False),
+        enabled=telegram_enabled,
         bot_token=bot_token,
         chat_ids=validated_chat_ids,
         send_summary=telegram_data.get("send_summary", True),
@@ -769,18 +826,14 @@ def load_config() -> Config:
     weights_without_keywords = weight_keys - keyword_keys
     keywords_without_weights = keyword_keys - weight_keys
     if weights_without_keywords:
-        import warnings
-        warnings.warn(
+        logger.warning(
             f"Scoring categories have weights but no keywords: {weights_without_keywords}. "
-            "These categories will never match.",
-            UserWarning,
+            "These categories will never match."
         )
     if keywords_without_weights:
-        import warnings
-        warnings.warn(
+        logger.warning(
             f"Scoring categories have keywords but no weights: {keywords_without_weights}. "
-            "These categories will match but contribute 0 to the score.",
-            UserWarning,
+            "These categories will match but contribute 0 to the score."
         )
 
     # Warn if bot_token appears to be a raw token in the config file
@@ -792,13 +845,10 @@ def load_config() -> Config:
         and not os.environ.get("TELEGRAM_BOT_TOKEN")
     ):
         # Check if the token looks like a real Telegram bot token (digits:alphanumeric)
-        import re
         if re.match(r"^\d+:[A-Za-z0-9_-]+$", telegram.bot_token):
-            import warnings
-            warnings.warn(
+            logger.warning(
                 "Telegram bot_token appears to be hardcoded in config file. "
-                "Consider using environment variable TELEGRAM_BOT_TOKEN or $VAR_NAME syntax.",
-                UserWarning,
+                "Consider using environment variable TELEGRAM_BOT_TOKEN or $VAR_NAME syntax."
             )
 
     # Ensure directories exist
