@@ -273,6 +273,19 @@ class ProfileConfig:
 
 
 @dataclass
+class VectorSearchConfig:
+    """Vector search configuration for semantic job search."""
+
+    enabled: bool = True
+    model_name: str = "all-MiniLM-L6-v2"
+    persist_dir: str = "data/chroma"
+    embed_on_save: bool = True
+    default_results: int = 20
+    backfill_on_startup: bool = True
+    batch_size: int = 100
+
+
+@dataclass
 class SchedulerConfig:
     """Scheduler configuration for automated periodic execution."""
 
@@ -330,6 +343,7 @@ class Config:
     profile: ProfileConfig = field(default_factory=ProfileConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
+    vector_search: VectorSearchConfig = field(default_factory=VectorSearchConfig)
 
     @property
     def results_path(self) -> Path:
@@ -345,6 +359,11 @@ class Config:
     def database_path(self) -> Path:
         """Get absolute path to SQLite database."""
         return self.data_path / self.output.database_file
+
+    @property
+    def chroma_path(self) -> Path:
+        """Get absolute path to ChromaDB persistence directory."""
+        return self.data_path / "chroma"
 
     @property
     def log_path(self) -> Path:
@@ -745,6 +764,29 @@ def _parse_notifications_config(data: dict[str, Any]) -> NotificationsConfig:
     )
 
 
+def _parse_vector_search_config(data: dict[str, Any]) -> VectorSearchConfig:
+    """Parse vector search configuration from dict with validation."""
+    vector_data = data.get("vector_search", {})
+
+    default_results = _validate_positive_int(
+        vector_data.get("default_results", 20), "default_results", 20
+    )
+
+    batch_size = _validate_positive_int(
+        vector_data.get("batch_size", 100), "batch_size", 100
+    )
+
+    return VectorSearchConfig(
+        enabled=vector_data.get("enabled", True),
+        model_name=vector_data.get("model_name", "all-MiniLM-L6-v2"),
+        persist_dir=vector_data.get("persist_dir", "data/chroma"),
+        embed_on_save=vector_data.get("embed_on_save", True),
+        default_results=default_results,
+        backfill_on_startup=vector_data.get("backfill_on_startup", True),
+        batch_size=batch_size,
+    )
+
+
 def _parse_queries(data: dict[str, Any]) -> dict[str, list[str]]:
     """Parse search queries from dict.
 
@@ -818,6 +860,7 @@ def load_config() -> Config:
         profile=_parse_profile_config(data),
         scheduler=_parse_scheduler_config(data),
         notifications=_parse_notifications_config(data),
+        vector_search=_parse_vector_search_config(data),
     )
 
     # Cross-section validation: scoring weights vs keywords
