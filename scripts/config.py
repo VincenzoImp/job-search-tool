@@ -363,7 +363,10 @@ class Config:
     @property
     def chroma_path(self) -> Path:
         """Get absolute path to ChromaDB persistence directory."""
-        return self.data_path / "chroma"
+        persist_dir = Path(self.vector_search.persist_dir)
+        if persist_dir.is_absolute():
+            return persist_dir
+        return BASE_DIR / persist_dir
 
     @property
     def log_path(self) -> Path:
@@ -897,6 +900,7 @@ def load_config() -> Config:
     # Ensure directories exist
     config.results_path.mkdir(parents=True, exist_ok=True)
     config.data_path.mkdir(parents=True, exist_ok=True)
+    config.chroma_path.mkdir(parents=True, exist_ok=True)
     config.log_path.parent.mkdir(parents=True, exist_ok=True)
 
     return config
