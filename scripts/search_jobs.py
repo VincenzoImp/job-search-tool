@@ -147,6 +147,15 @@ def search_single_query(
     """
     logger = get_logger("search")
 
+    configured_job_types = [
+        str(job_type).strip()
+        for job_type in config.search.job_types
+        if str(job_type).strip()
+    ]
+    requested_job_types: list[str | None] = (
+        list(configured_job_types) if configured_job_types else [None]
+    )
+
     @retry(
         retry=retry_if_exception_type((ConnectionError, TimeoutError)),
         stop=stop_after_attempt(config.retry.max_attempts),
@@ -156,9 +165,10 @@ def search_single_query(
         ),
         reraise=True,
     )
-    def _do_search() -> pd.DataFrame:
-        # NOTE: For Indeed, using hours_old disables job_type filtering (JobSpy limitation)
-        # We prioritize date filtering over job type for broader results
+    def _do_search(job_type: str | None) -> pd.DataFrame:
+        # NOTE: Some sources may ignore job_type when hours_old is active
+        # (for example Indeed). We still issue one request per configured
+        # job type so the overall behavior matches the user-facing config.
         return scrape_jobs(
             # Core parameters
             site_name=config.search.sites,
@@ -170,6 +180,7 @@ def search_single_query(
             # JobSpy core parameters
             distance=config.search.distance,
             is_remote=config.search.is_remote,
+            job_type=job_type,
             easy_apply=config.search.easy_apply,
             offset=config.search.offset,
             # Output format parameters
@@ -187,51 +198,84 @@ def search_single_query(
             user_agent=config.search.user_agent,
         )
 
-    try:
-        jobs = _do_search()
+    def _handle_search_error(exc: Exception, job_type: str | None) -> str:
+        job_type_suffix = f" [{job_type or 'any type'}]"
+        if isinstance(exc, (ConnectionError, TimeoutError)):
+            error_msg = f"Network error: {exc}"
+            logger.warning(
+                f"Query failed: {query} @ {location}{job_type_suffix}: {error_msg}"
+            )
+            return error_msg
+        if isinstance(exc, ValueError):
+            error_msg = f"Data error: {exc}"
+            logger.warning(
+                f"Query failed: {query} @ {location}{job_type_suffix}: {error_msg}"
+            )
+            return error_msg
+        if isinstance(exc, (KeyError, AttributeError)):
+            error_msg = f"Parse error: {exc}"
+            logger.error(
+                f"Query failed: {query} @ {location}{job_type_suffix}: {error_msg}"
+            )
+            return error_msg
+
+        error_msg = f"Unexpected error ({type(exc).__name__}): {exc}"
+        logger.warning(
+            f"Query failed: {query} @ {location}{job_type_suffix}: {error_msg}"
+        )
+        return error_msg
+
+    result_frames: list[pd.DataFrame] = []
+    errors: list[str] = []
+
+    for job_type in requested_job_types:
+        try:
+            jobs = _do_search(job_type)
+        except Exception as exc:
+            errors.append(_handle_search_error(exc, job_type))
+            continue
 
         if jobs is not None and len(jobs) > 0:
-            jobs["search_query"] = query
-            jobs["search_location"] = location
-            jobs["search_date"] = datetime.now().strftime("%Y-%m-%d")
+            result_frames.append(jobs)
 
-            # Apply fuzzy post-filter to validate results match query terms
-            original_count = len(jobs)
-            jobs = fuzzy_post_filter(jobs, query, location, config)
+    if not result_frames:
+        combined_error = "; ".join(dict.fromkeys(errors)) if errors else None
+        return query, location, None, combined_error
 
-            if len(jobs) < original_count:
-                logger.debug(
-                    f"Post-filter: {query} @ {location}: "
-                    f"{original_count} -> {len(jobs)} jobs"
-                )
+    jobs = (
+        pd.concat(result_frames, ignore_index=True)
+        if len(result_frames) > 1
+        else result_frames[0].copy()
+    )
 
-            if len(jobs) == 0:
-                return query, location, None, None
+    if len(jobs) > 1:
+        job_ids = jobs.apply(
+            lambda row: generate_job_id(
+                str(row.get("title", "")),
+                str(row.get("company", "")),
+                str(row.get("location", "")),
+            ),
+            axis=1,
+        )
+        jobs = jobs.loc[~job_ids.duplicated()].copy()
 
-            return query, location, jobs, None
-        else:
-            return query, location, None, None
+    jobs["search_query"] = query
+    jobs["search_location"] = location
+    jobs["search_date"] = datetime.now().strftime("%Y-%m-%d")
 
-    except (ConnectionError, TimeoutError) as e:
-        # Network errors - may be recoverable on retry
-        error_msg = f"Network error: {e}"
-        logger.warning(f"Query failed: {query} @ {location}: {error_msg}")
-        return query, location, None, error_msg
-    except ValueError as e:
-        # Invalid data from JobSpy
-        error_msg = f"Data error: {e}"
-        logger.warning(f"Query failed: {query} @ {location}: {error_msg}")
-        return query, location, None, error_msg
-    except (KeyError, AttributeError) as e:
-        # Unexpected response structure
-        error_msg = f"Parse error: {e}"
-        logger.error(f"Query failed: {query} @ {location}: {error_msg}")
-        return query, location, None, error_msg
-    except Exception as e:
-        # Catch-all for unexpected errors (e.g. upstream JobSpy bugs)
-        error_msg = f"Unexpected error ({type(e).__name__}): {e}"
-        logger.warning(f"Query failed: {query} @ {location}: {error_msg}")
-        return query, location, None, error_msg
+    # Apply fuzzy post-filter to validate results match query terms
+    original_count = len(jobs)
+    jobs = fuzzy_post_filter(jobs, query, location, config)
+
+    if len(jobs) < original_count:
+        logger.debug(
+            f"Post-filter: {query} @ {location}: {original_count} -> {len(jobs)} jobs"
+        )
+
+    if len(jobs) == 0:
+        return query, location, None, None
+
+    return query, location, jobs, None
 
 
 def search_jobs(config: Config) -> tuple[pd.DataFrame | None, SearchSummary]:
