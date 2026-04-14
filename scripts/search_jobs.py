@@ -442,6 +442,14 @@ def main() -> None:
 
     # Filter relevant jobs
     relevant_jobs = filter_relevant_jobs(all_jobs, config)
+    filtered_relevant_jobs = db.filter_blacklisted_jobs(relevant_jobs)
+    blacklisted_removed = len(relevant_jobs) - len(filtered_relevant_jobs)
+    if blacklisted_removed > 0:
+        logger.info(
+            "Skipped %d blacklisted relevant job(s) before saving",
+            blacklisted_removed,
+        )
+    relevant_jobs = filtered_relevant_jobs
     summary.relevant_jobs = len(relevant_jobs)
 
     if len(relevant_jobs) == 0:
