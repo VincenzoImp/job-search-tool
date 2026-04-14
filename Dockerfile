@@ -70,8 +70,7 @@ COPY --from=builder /usr/local/bin/job-search-entrypoint /usr/local/bin/job-sear
 
 # Create output directories with correct ownership
 RUN chmod +x /usr/local/bin/job-search-entrypoint \
-    && mkdir -p /app/results /app/data /app/data/chroma /app/logs /opt/job-search-tool/defaults \
-    && chown -R appuser:appuser /app /opt/job-search-tool
+    && install -d -o appuser -g appuser /app/results /app/data /app/data/chroma /app/logs /opt/job-search-tool/defaults
 
 # Switch to non-root user
 USER appuser
