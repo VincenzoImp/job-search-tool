@@ -127,7 +127,11 @@ def run_job_search() -> bool:
 
         print_top_jobs(to_save)
 
-        notify_ids = set(partitions.to_notify["job_id"]) if "job_id" in partitions.to_notify.columns else None
+        notify_ids = (
+            set(partitions.to_notify["job_id"])
+            if "job_id" in partitions.to_notify.columns
+            else None
+        )
         if notify_ids is None:
             notify_job_ids_in_run = [
                 job_id

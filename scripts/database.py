@@ -1451,9 +1451,7 @@ class JobDatabase:
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT COUNT(*) FROM jobs WHERE bookmarked = 1"
-            )
+            cursor.execute("SELECT COUNT(*) FROM jobs WHERE bookmarked = 1")
             protected_bookmarked = int(cursor.fetchone()[0])
             cursor.execute("SELECT COUNT(*) FROM jobs WHERE applied = 1")
             protected_applied = int(cursor.fetchone()[0])
@@ -1561,5 +1559,3 @@ def recalculate_all_scores(db: JobDatabase, config: Config) -> int:
 
     logger.info(f"Recalculated scores: {updated} jobs updated")
     return updated
-
-

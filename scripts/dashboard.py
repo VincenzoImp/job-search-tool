@@ -896,9 +896,7 @@ def _render_db_management(
             preview = db.count_blacklist_older_than(int(bl_days))
             st.caption(f"{preview} blacklist row(s) would be purged.")
         with c2:
-            if st.button(
-                "Purge", key="cleanup_blacklist_btn", disabled=preview == 0
-            ):
+            if st.button("Purge", key="cleanup_blacklist_btn", disabled=preview == 0):
                 n = db.purge_blacklist(older_than_days=int(bl_days))
                 _clear_caches()
                 st.toast(f"Purged {n} blacklist row(s)")
@@ -908,9 +906,7 @@ def _render_db_management(
         c1, c2 = st.columns([3, 1])
         with c1:
             st.markdown("**Apply settings.yaml retention now**")
-            st.caption(
-                "Runs the same reconciliation that fires at every boot."
-            )
+            st.caption("Runs the same reconciliation that fires at every boot.")
         with c2:
             if st.button("Reconcile", key="cleanup_reconcile_btn"):
                 report = db.reconcile_with_config(config)

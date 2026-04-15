@@ -555,7 +555,12 @@ class TestRetentionMethods:
 
     def test_delete_jobs_below_score_protects_applied(self, temp_db):
         job = Job.from_dict(
-            {"title": "Applied", "company": "C", "location": "NYC", "relevance_score": 1}
+            {
+                "title": "Applied",
+                "company": "C",
+                "location": "NYC",
+                "relevance_score": 1,
+            }
         )
         temp_db.save_job(job)
         temp_db.mark_as_applied(job.job_id)

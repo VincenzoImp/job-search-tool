@@ -450,5 +450,3 @@ def print_top_jobs(jobs_df: pd.DataFrame, count: int = 10) -> None:
         logger.info(f"   Relevance Score: {row['relevance_score']}")
         if pd.notna(row.get("job_url")):
             logger.info(f"   URL: {row['job_url']}")
-
-
