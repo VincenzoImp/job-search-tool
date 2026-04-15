@@ -129,14 +129,16 @@ class SearchConfig:
 class ScoringConfig:
     """Relevance scoring configuration.
 
-    The scoring system is fully dynamic: it iterates over all keyword categories
-    and applies the corresponding weight when a match is found.
+    Two thresholds carve the DB score range into three zones:
+      score < save_threshold            → dropped, never enters the DB
+      save_threshold ≤ score < notify   → saved, visible in dashboard, no ping
+      score ≥ notify_threshold          → saved AND triggers notifications
 
-    Users should define their own categories in settings.yaml. The defaults here
-    are generic examples that work for typical software engineering searches.
+    ``notify_threshold`` must be ≥ ``save_threshold`` (enforced at load time).
     """
 
-    threshold: int = 10
+    save_threshold: int = 0
+    notify_threshold: int = 20
     weights: dict[str, int] = field(
         default_factory=lambda: {
             "primary_skills": 20,
@@ -274,27 +276,22 @@ class LoggingConfig:
 
 
 @dataclass
-class DatabaseConfig:
-    """Database configuration."""
+class RetentionConfig:
+    """Automatic retention rules applied at every boot via reconciliation.
 
-    cleanup_enabled: bool = False  # Enable automatic cleanup of old jobs
-    cleanup_days: int = (
-        60  # Delete jobs not seen in this many days (jobs can stay open long)
-    )
-    recalculate_scores_on_startup: bool = True  # Recalculate scores on startup
+    Bookmarked and applied jobs are always protected — this is hardcoded in
+    the SQL layer, not configurable here.
+    """
+
+    max_age_days: int = 30
+    purge_blacklist_after_days: int = 90
 
 
 @dataclass
-class OutputConfig:
-    """Output format configuration.
+class DatabaseConfig:
+    """Database configuration."""
 
-    File system paths are fixed relative to ``DATA_DIR`` — see ``Config``'s
-    ``results_path`` / ``database_path`` / ``chroma_path`` / ``log_path``
-    properties. Only the CSV/Excel toggles live here.
-    """
-
-    save_csv: bool = True  # Save CSV files
-    save_excel: bool = True  # Save Excel files
+    retention: RetentionConfig = field(default_factory=RetentionConfig)
 
 
 @dataclass
@@ -345,23 +342,20 @@ class SchedulerConfig:
 
 @dataclass
 class TelegramConfig:
-    """Telegram notification configuration."""
+    """Telegram notification configuration.
+
+    The "which jobs to notify about" decision lives in ``scoring.notify_threshold``
+    and is applied upstream, not here. This class only configures channel UX.
+    """
 
     enabled: bool = False
     bot_token: str = ""  # From @BotFather
     chat_ids: list[str] = field(default_factory=list)  # Recipients
     send_summary: bool = True  # Send run summary
-    min_score_for_notification: int = 0  # Min score to include in notifications
-    max_jobs_in_message: int = (
-        20  # Max jobs to show in message (more visible before split)
-    )
-    jobs_per_chunk: int = (
-        10  # Jobs per Telegram message chunk (Telegram has 4096 char limit)
-    )
-    include_top_overall: bool = (
-        True  # Include top jobs from entire database (not just new)
-    )
-    max_top_overall: int = 10  # Max top jobs from entire database to include
+    max_jobs_in_message: int = 20
+    jobs_per_chunk: int = 10  # Telegram has a 4096 char limit per message
+    include_top_overall: bool = True
+    max_top_overall: int = 10
 
 
 @dataclass
@@ -385,7 +379,6 @@ class Config:
     post_filter: PostFilterConfig = field(default_factory=PostFilterConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
-    output: OutputConfig = field(default_factory=OutputConfig)
     profile: ProfileConfig = field(default_factory=ProfileConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
@@ -528,8 +521,14 @@ def _parse_scoring_config(data: dict[str, Any]) -> ScoringConfig:
     if "keywords" in scoring_data:
         keywords.update(scoring_data["keywords"])
 
+    save_threshold = int(scoring_data.get("save_threshold", defaults.save_threshold))
+    notify_threshold = int(
+        scoring_data.get("notify_threshold", defaults.notify_threshold)
+    )
+
     return ScoringConfig(
-        threshold=scoring_data.get("threshold", defaults.threshold),
+        save_threshold=save_threshold,
+        notify_threshold=notify_threshold,
         weights=weights,
         keywords=keywords,
     )
@@ -655,36 +654,21 @@ def _parse_database_config(data: dict[str, Any]) -> DatabaseConfig:
     """Parse database configuration from dict with validation."""
     database_data = data.get("database", {})
 
-    cleanup_days = _validate_positive_int(
-        database_data.get("cleanup_days", 60), "cleanup_days", 60
+    retention_data = database_data.get("retention", {})
+    max_age_days = _validate_positive_int(
+        retention_data.get("max_age_days", 30), "retention.max_age_days", 30
+    )
+    purge_blacklist_after_days = _validate_positive_int(
+        retention_data.get("purge_blacklist_after_days", 90),
+        "retention.purge_blacklist_after_days",
+        90,
     )
 
     return DatabaseConfig(
-        cleanup_enabled=database_data.get("cleanup_enabled", False),
-        cleanup_days=cleanup_days,
-        recalculate_scores_on_startup=database_data.get(
-            "recalculate_scores_on_startup", True
+        retention=RetentionConfig(
+            max_age_days=max_age_days,
+            purge_blacklist_after_days=purge_blacklist_after_days,
         ),
-    )
-
-
-def _parse_output_config(data: dict[str, Any]) -> OutputConfig:
-    """Parse output configuration from dict."""
-    output_data = data.get("output", {})
-    # Legacy path keys (results_dir / data_dir / database_file) are now fixed
-    # under DATA_DIR and silently ignored. Warn once per process.
-    legacy_keys = {"results_dir", "data_dir", "database_file"}
-    stale = sorted(legacy_keys & set(output_data.keys()))
-    if stale:
-        stale_fq = ", ".join(f"output.{k}" for k in stale)
-        _warn_legacy_once(
-            "output_paths",
-            f"{stale_fq} is ignored in v6+: persistent paths are now fixed "
-            "relative to JOB_SEARCH_DATA_DIR. Remove these keys from settings.yaml.",
-        )
-    return OutputConfig(
-        save_csv=output_data.get("save_csv", True),
-        save_excel=output_data.get("save_excel", True),
     )
 
 
@@ -753,12 +737,6 @@ def _parse_telegram_config(data: dict[str, Any]) -> TelegramConfig:
     """
     telegram_data = data.get("telegram", {})
 
-    min_score = telegram_data.get("min_score_for_notification", 0)
-    if min_score < 0:
-        raise ValueError(
-            f"min_score_for_notification cannot be negative, got {min_score}"
-        )
-
     max_jobs = _validate_positive_int(
         telegram_data.get("max_jobs_in_message", 20), "max_jobs_in_message", 20
     )
@@ -817,7 +795,6 @@ def _parse_telegram_config(data: dict[str, Any]) -> TelegramConfig:
         bot_token=bot_token,
         chat_ids=validated_chat_ids,
         send_summary=telegram_data.get("send_summary", True),
-        min_score_for_notification=min_score,
         max_jobs_in_message=max_jobs,
         jobs_per_chunk=jobs_per_chunk,
         include_top_overall=telegram_data.get("include_top_overall", True),
@@ -936,12 +913,19 @@ def load_config() -> Config:
         post_filter=_parse_post_filter_config(data),
         logging=_parse_logging_config(data),
         database=_parse_database_config(data),
-        output=_parse_output_config(data),
         profile=_parse_profile_config(data),
         scheduler=_parse_scheduler_config(data),
         notifications=_parse_notifications_config(data),
         vector_search=_parse_vector_search_config(data),
     )
+
+    # Cross-section validation: notify_threshold must be >= save_threshold
+    if config.scoring.notify_threshold < config.scoring.save_threshold:
+        raise ValueError(
+            f"scoring.notify_threshold ({config.scoring.notify_threshold}) must be "
+            f">= scoring.save_threshold ({config.scoring.save_threshold}): "
+            "notifying about jobs that aren't saved is nonsensical."
+        )
 
     # Cross-section validation: scoring weights vs keywords
     weight_keys = set(config.scoring.weights.keys())
@@ -974,8 +958,8 @@ def load_config() -> Config:
                 "Consider using environment variable TELEGRAM_BOT_TOKEN or $VAR_NAME syntax."
             )
 
-    # Ensure persistent directories exist under DATA_DIR.
-    config.results_path.mkdir(parents=True, exist_ok=True)
+    # Ensure persistent directories exist under DATA_DIR. The results/ tree
+    # is created on-demand when the dashboard exports, not here.
     config.database_path.parent.mkdir(parents=True, exist_ok=True)
     config.chroma_path.mkdir(parents=True, exist_ok=True)
     config.logs_dir.mkdir(parents=True, exist_ok=True)

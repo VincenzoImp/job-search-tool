@@ -27,15 +27,10 @@ from tenacity import (
     wait_exponential,
 )
 
-from config import Config, get_config
-from database import get_database
-from exporter import save_results
-from logger import ProgressLogger, get_logger, log_section, setup_logging
+from config import Config
+from logger import ProgressLogger, get_logger, log_section
 from models import SearchSummary, generate_job_id
-from scoring import (
-    filter_relevant_jobs,
-    fuzzy_post_filter,
-)
+from scoring import fuzzy_post_filter
 
 
 # Thread-safe lock for shared data structures
@@ -455,73 +450,3 @@ def print_top_jobs(jobs_df: pd.DataFrame, count: int = 10) -> None:
         logger.info(f"   Relevance Score: {row['relevance_score']}")
         if pd.notna(row.get("job_url")):
             logger.info(f"   URL: {row['job_url']}")
-
-
-def main() -> None:
-    """Main execution function."""
-    # Load configuration
-    config = get_config()
-
-    # Setup logging
-    logger = setup_logging(config)
-
-    # Print banner
-    print_banner(config)
-
-    # Initialize database
-    db = get_database(config)
-    db_stats = db.get_statistics()
-    logger.info(f"Database: {db_stats['total_jobs']} jobs tracked")
-
-    # Search for jobs
-    all_jobs, summary = search_jobs(config)
-
-    if all_jobs is None or len(all_jobs) == 0:
-        logger.error("No jobs found. Exiting.")
-        return
-
-    # Save all results
-    log_section(logger, "SAVING ALL RESULTS")
-    save_results(all_jobs, config, "all_jobs")
-
-    # Filter relevant jobs
-    relevant_jobs = filter_relevant_jobs(all_jobs, config)
-    filtered_relevant_jobs = db.filter_blacklisted_jobs(relevant_jobs)
-    blacklisted_removed = len(relevant_jobs) - len(filtered_relevant_jobs)
-    if blacklisted_removed > 0:
-        logger.info(
-            "Skipped %d blacklisted relevant job(s) before saving",
-            blacklisted_removed,
-        )
-    relevant_jobs = filtered_relevant_jobs
-    summary.relevant_jobs = len(relevant_jobs)
-
-    if len(relevant_jobs) == 0:
-        logger.warning("No highly relevant jobs found after filtering.")
-        logger.info("Tip: Check the 'all_jobs' file for broader results.")
-        return
-
-    # Save filtered results
-    log_section(logger, "SAVING FILTERED RESULTS")
-    save_results(relevant_jobs, config, "relevant_jobs")
-
-    # Save to database and identify new jobs
-    new_count, updated_count = db.save_jobs_from_dataframe(relevant_jobs)
-    summary.new_jobs = new_count
-
-    logger.info(f"Database updated: {new_count} new, {updated_count} existing")
-
-    # Print top matches
-    print_top_jobs(relevant_jobs)
-
-    # Print summary
-    log_section(logger, "SEARCH COMPLETE")
-    logger.info(f"Duration: {summary.duration_formatted}")
-    logger.info(f"Total unique jobs: {summary.unique_jobs}")
-    logger.info(f"Highly relevant jobs: {summary.relevant_jobs}")
-    logger.info(f"New jobs (first time seen): {summary.new_jobs}")
-    logger.info("Check the 'results' folder for detailed CSV and Excel files.")
-
-
-if __name__ == "__main__":
-    main()

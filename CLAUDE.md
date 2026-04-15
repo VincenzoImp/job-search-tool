@@ -143,13 +143,14 @@ def run_job_search() -> bool:
     Execute a single search iteration.
 
     Flow:
-    1. Reload configuration (picks up any changes)
-    2. Initialize database connection
-    3. Cleanup old jobs (if enabled)
-    4. Execute parallel search via search_jobs()
-    5. Filter by relevance threshold
-    6. Save to database
-    7. Send notifications for new jobs
+    1. Reload configuration
+    2. Search for jobs via search_jobs()
+    3. Score jobs (score_jobs) and partition by save/notify thresholds
+       (partition_by_thresholds)
+    4. Drop blacklisted entries (db.exclude_blacklisted)
+    5. Upsert the save partition into SQLite
+    6. Embed new jobs in the vector store
+    7. Send notifications for new jobs in the notify partition
 
     Returns:
         True if successful, False on error.
@@ -238,43 +239,39 @@ def calculate_relevance_score(row: pd.Series, config: Config) -> int:
     2. For each category in config.scoring.keywords:
        - If ANY keyword matches (case-insensitive): add weight
     3. Return total score
-
-    Args:
-        row: DataFrame row with job data.
-        config: Configuration with scoring settings.
-
-    Returns:
-        Integer score (can be negative if 'avoid' categories match).
     """
 
-def filter_relevant_jobs(df: pd.DataFrame, config: Config) -> pd.DataFrame:
-    """
-    Filter jobs by relevance score threshold.
+def score_jobs(df: pd.DataFrame, config: Config) -> pd.DataFrame:
+    """Return a copy of ``df`` with a ``relevance_score`` column added."""
 
-    Args:
-        df: DataFrame with all jobs.
-        config: Configuration with threshold.
+@dataclass
+class Partitions:
+    scored: pd.DataFrame     # every row, for debug
+    to_save: pd.DataFrame    # >= save_threshold
+    to_notify: pd.DataFrame  # >= notify_threshold
 
-    Returns:
-        Filtered and sorted DataFrame.
-    """
+def partition_by_thresholds(scored: pd.DataFrame, config: Config) -> Partitions:
+    """Carve a scored frame into save/notify partitions."""
 ```
 
 ### 2b. Exporter (`exporter.py`)
 
-CSV/Excel export with formula injection protection, extracted from `search_jobs.py`.
+On-demand CSV/Excel export. The search pipeline no longer writes spreadsheets —
+exports are triggered exclusively from the dashboard's Database tab.
 
 **Key Functions:**
 
 ```python
-def save_results(df: pd.DataFrame, config: Config) -> None:
-    """
-    Save search results to CSV and/or Excel.
+def export_dataframe(
+    jobs_df: pd.DataFrame,
+    output_dir: Path,
+    basename: str,
+    fmt: str,  # "csv" or "excel"
+) -> Path:
+    """Serialize a DataFrame with formula-injection protection.
 
-    Features:
-    - Formula injection protection (sanitizes cell values)
-    - Formatted Excel output via OpenPyXL
-    - Configurable output directory
+    The output directory is created lazily; no side effects unless this
+    helper is actually called.
     """
 ```
 
@@ -362,8 +359,9 @@ class NotificationData:
 ```
 
 **Telegram Notification Sections:**
-- 🆕 **New Jobs** - Jobs found in the current search run (filtered by `min_score_for_notification`)
-- 🏆 **Top Jobs Overall** - Best jobs from entire database (controlled by `include_top_overall` and `max_top_overall`)
+- 🆕 **New Jobs** - Jobs found in the current search run (already filtered upstream by `scoring.notify_threshold`)
+- 🏆 **Top Jobs Overall** - Best jobs from entire database (controlled by `include_top_overall` and `max_top_overall`, with `scoring.notify_threshold` as the floor)
+- 🧹 **Startup cleanup summary** — emitted once per boot when the reconciliation pass removed anything
 
 ### 5. Database Layer (`database.py`)
 
@@ -393,27 +391,25 @@ class JobDatabase:
     """
 ```
 
+**Retention API (all DELETEs except `reset_all` protect bookmarked/applied jobs at the SQL level):**
+
+```python
+delete_jobs_below_score(score: int) -> int
+delete_stale_jobs(max_age_days: int) -> int
+purge_blacklist(older_than_days: int | None = None) -> int
+get_score_distribution(bin_size: int = 5) -> list[tuple[int, int]]
+count_jobs_below_score(score: int) -> int
+count_stale_jobs(days: int) -> int
+count_blacklist_older_than(days: int) -> int
+reconcile_with_config(config: Config) -> ReconciliationReport
+reset_all() -> tuple[int, int]  # ONLY path that bypasses protection
+```
+
 **Utility Functions:**
 
 ```python
 def recalculate_all_scores(db: JobDatabase, config: Config) -> int:
-    """
-    Recalculate relevance scores for all existing jobs.
-
-    Called once at startup to apply current scoring criteria
-    to historical data.
-
-    Returns:
-        Number of jobs updated.
-    """
-
-def cleanup_old_jobs(db: JobDatabase, days: int) -> int:
-    """
-    Delete jobs not seen in the specified number of days.
-
-    Returns:
-        Number of jobs deleted.
-    """
+    """Recalculate relevance scores for all existing jobs (always runs at boot)."""
 ```
 
 ### 6. Configuration System (`config.py`)
@@ -434,7 +430,6 @@ class Config:
     post_filter: PostFilterConfig
     logging: LoggingConfig
     database: DatabaseConfig
-    output: OutputConfig
     profile: ProfileConfig
     scheduler: SchedulerConfig
     notifications: NotificationsConfig
@@ -462,14 +457,16 @@ All numeric parameters are validated:
 - `base_delay >= 0`
 - `backoff_factor >= 1.0`
 - `jitter` between 0 and 1.0
-- `cleanup_days >= 1`
+- `retention.max_age_days >= 1`
+- `retention.purge_blacklist_after_days >= 1`
 - `max_retries >= 0` (0 = unlimited)
 - `description_format` must be `markdown`, `html`, or `plain`
 
-**Cross-Section Validation (warnings):**
-- Categories in `weights` without matching `keywords` (will never match)
-- Categories in `keywords` without matching `weights` (will contribute 0)
-- Hardcoded `bot_token` in config file (recommends env var)
+**Cross-Section Validation:**
+- **Error:** `scoring.notify_threshold < scoring.save_threshold` (refuses to load)
+- Warning: categories in `weights` without matching `keywords` (will never match)
+- Warning: categories in `keywords` without matching `weights` (will contribute 0)
+- Warning: hardcoded `bot_token` in config file (recommends env var)
 
 ### 7. Data Models (`models.py`)
 
@@ -609,9 +606,10 @@ queries:
   category_name:
     - "query string"
 
-# Scoring system
+# Scoring system (two thresholds carve the score range)
 scoring:
-  threshold: 15
+  save_threshold: 0      # below → never saved
+  notify_threshold: 20   # at or above → triggers notifications (must be ≥ save)
   weights:
     category_name: 25
   keywords:
@@ -648,21 +646,16 @@ notifications:
     enabled: true
     bot_token: "..."
     chat_ids: ["..."]
-    min_score_for_notification: 20
     max_jobs_in_message: 50
     jobs_per_chunk: 10
     include_top_overall: true  # Show top jobs from entire database
-    max_top_overall: 10  # Max top jobs to show
+    max_top_overall: 10        # Max top jobs to show
 
-# Database maintenance
+# Database maintenance (applied at every boot via reconcile_with_config)
 database:
-  cleanup_enabled: true
-  cleanup_days: 30
-
-# Output toggles (persistent paths are fixed under JOB_SEARCH_DATA_DIR)
-output:
-  save_csv: true
-  save_excel: true
+  retention:
+    max_age_days: 30
+    purge_blacklist_after_days: 90
 
 # Vector search (semantic similarity)
 vector_search:
@@ -708,8 +701,10 @@ main()
 ├── Load configuration
 ├── Setup logging
 ├── Get database connection
-├── recalculate_all_scores()     # Once at startup
-├── backfill_embeddings()       # Once at startup (if vector_search enabled)
+├── recalculate_all_scores()        # Always, every boot
+├── db.reconcile_with_config()      # Score/age/blacklist retention
+├── vector_store sync + backfill    # If vector_search.enabled
+├── (optional) Telegram reconcile summary on cleanup
 ├── Create scheduler
 └── scheduler.start() or scheduler.run_once()
 ```
@@ -719,22 +714,13 @@ main()
 ```
 run_job_search()
 ├── Reload configuration
-├── Get database connection
-├── cleanup_old_jobs()           # Each iteration (if enabled)
-├── search_jobs()
-│   ├── Build query-location pairs
-│   ├── Execute parallel searches (ThreadPoolExecutor)
-│   ├── Apply per-site throttling
-│   ├── Deduplicate results
-│   └── Return combined DataFrame
-├── filter_relevant_jobs()
-│   ├── Calculate scores for all jobs
-│   ├── Filter by threshold
-│   └── Sort by score descending
-├── save_results()               # CSV/Excel (if enabled)
-├── db.save_jobs_from_dataframe()
-├── embed_new_jobs()            # Vector store (if enabled)
-└── _send_notifications()        # For new jobs only
+├── search_jobs()                   # Scrape + throttle + dedupe
+├── score_jobs(df, config)          # Adds relevance_score column
+├── partition_by_thresholds(...)    # Splits into scored / to_save / to_notify
+├── db.exclude_blacklisted(to_save)
+├── db.save_jobs_from_dataframe(to_save)
+├── vector_store.add_jobs_from_dataframe(to_save)
+└── _send_notifications()           # New jobs in to_notify only
 ```
 
 ---
