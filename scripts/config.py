@@ -315,9 +315,13 @@ class VectorSearchConfig:
 
 @dataclass
 class SchedulerConfig:
-    """Scheduler configuration for automated periodic execution."""
+    """Scheduler configuration for automated periodic execution.
 
-    enabled: bool = False  # If False, single-shot mode (backward compatible)
+    The operating mode (continuous scheduler vs single-shot) is chosen by the
+    CLI subcommand in ``main.py`` (``scheduler`` / ``once``), so no ``enabled``
+    toggle lives here — the knobs below only tune the continuous loop.
+    """
+
     interval_hours: int = 24  # Run every N hours
     run_on_startup: bool = True  # Execute immediately on startup
     retry_on_failure: bool = True  # Retry if search fails
@@ -707,8 +711,14 @@ def _parse_scheduler_config(data: dict[str, Any]) -> SchedulerConfig:
     if max_retries < 0:
         raise ValueError(f"max_retries cannot be negative, got {max_retries}")
 
+    if "enabled" in scheduler_data:
+        logger.warning(
+            "scheduler.enabled is ignored in v6+: the operating mode is chosen "
+            "by the CLI subcommand (`python main.py scheduler|once`). "
+            "Remove this key from settings.yaml."
+        )
+
     return SchedulerConfig(
-        enabled=scheduler_data.get("enabled", False),
         interval_hours=interval_hours,
         run_on_startup=scheduler_data.get("run_on_startup", True),
         retry_on_failure=scheduler_data.get("retry_on_failure", True),
