@@ -255,16 +255,6 @@ class TestTelegramConfigValidation:
         assert config.chat_ids == ["12345", "67890"]
         assert config.max_jobs_in_message == 20
 
-    def test_legacy_min_score_key_is_accepted(self):
-        """Legacy telegram.min_score_for_notification is accepted (warned once)."""
-        import config as config_module
-
-        config_module._LEGACY_WARNED.clear()
-        # Should not raise; the key is silently absorbed.
-        cfg = _parse_telegram_config({"telegram": {"min_score_for_notification": 5}})
-        assert cfg is not None
-        assert "telegram_min_score" in config_module._LEGACY_WARNED
-
     def test_max_jobs_minimum(self):
         """Test max_jobs_in_message must be at least 1."""
         with pytest.raises(ValueError, match="max_jobs_in_message must be at least 1"):
@@ -357,12 +347,11 @@ class TestScoringConfigValidation:
         assert cfg.save_threshold == 0
         assert cfg.notify_threshold == 20
 
-    def test_legacy_threshold_key_is_warned(self):
-        import config as config_module
-
-        config_module._LEGACY_WARNED.clear()
-        _parse_scoring_config({"scoring": {"threshold": 15}})
-        assert "scoring_threshold" in config_module._LEGACY_WARNED
+    def test_unknown_threshold_key_is_ignored(self):
+        """Unknown keys like the old 'threshold' must be silently ignored."""
+        cfg = _parse_scoring_config({"scoring": {"threshold": 15}})
+        assert cfg.save_threshold == 0
+        assert cfg.notify_threshold == 20
 
     def test_notify_must_be_ge_save(self, tmp_path, monkeypatch):
         import config as config_module
@@ -385,15 +374,16 @@ class TestDatabaseRetentionConfig:
         assert cfg.database.retention.max_age_days == 30
         assert cfg.database.retention.purge_blacklist_after_days == 90
 
-    def test_legacy_keys_warn(self):
+    def test_unknown_database_keys_are_ignored(self):
+        """Old cleanup_* keys must be silently ignored, not translated."""
         import config as config_module
 
-        config_module._LEGACY_WARNED.clear()
-        config_module._parse_database_config(
+        cfg = config_module._parse_database_config(
             {"database": {"cleanup_enabled": True, "cleanup_days": 10}}
         )
-        assert "database_cleanup_enabled" in config_module._LEGACY_WARNED
-        assert "database_cleanup_days" in config_module._LEGACY_WARNED
+        # Defaults unchanged — legacy keys have no effect whatsoever.
+        assert cfg.retention.max_age_days == 30
+        assert cfg.retention.purge_blacklist_after_days == 90
 
 
 class TestConfigQueries:

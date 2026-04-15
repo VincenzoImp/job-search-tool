@@ -521,13 +521,6 @@ def _parse_scoring_config(data: dict[str, Any]) -> ScoringConfig:
     if "keywords" in scoring_data:
         keywords.update(scoring_data["keywords"])
 
-    if "threshold" in scoring_data:
-        _warn_legacy_once(
-            "scoring_threshold",
-            "scoring.threshold is ignored in v7+: split into scoring.save_threshold "
-            "and scoring.notify_threshold. Remove 'threshold' from settings.yaml.",
-        )
-
     save_threshold = int(scoring_data.get("save_threshold", defaults.save_threshold))
     notify_threshold = int(
         scoring_data.get("notify_threshold", defaults.notify_threshold)
@@ -661,15 +654,6 @@ def _parse_database_config(data: dict[str, Any]) -> DatabaseConfig:
     """Parse database configuration from dict with validation."""
     database_data = data.get("database", {})
 
-    for legacy_key in ("cleanup_enabled", "cleanup_days", "recalculate_scores_on_startup"):
-        if legacy_key in database_data:
-            _warn_legacy_once(
-                f"database_{legacy_key}",
-                f"database.{legacy_key} is ignored in v7+: retention is now driven "
-                "by database.retention and scoring.save_threshold at boot-time "
-                "reconciliation. Remove this key from settings.yaml.",
-            )
-
     retention_data = database_data.get("retention", {})
     max_age_days = _validate_positive_int(
         retention_data.get("max_age_days", 30), "retention.max_age_days", 30
@@ -752,13 +736,6 @@ def _parse_telegram_config(data: dict[str, Any]) -> TelegramConfig:
     3. Direct value in config file (not recommended for production)
     """
     telegram_data = data.get("telegram", {})
-
-    if "min_score_for_notification" in telegram_data:
-        _warn_legacy_once(
-            "telegram_min_score",
-            "telegram.min_score_for_notification is ignored in v7+: the notification "
-            "threshold is now scoring.notify_threshold. Remove this key from settings.yaml.",
-        )
 
     max_jobs = _validate_positive_int(
         telegram_data.get("max_jobs_in_message", 20), "max_jobs_in_message", 20
