@@ -1,4 +1,4 @@
-# CLAUDE.md - Developer Documentation
+# AGENTS.md - Developer Documentation
 
 > **Purpose**: This document provides comprehensive technical documentation for developers working on the Job Search Tool codebase. It covers architecture, implementation details, API references, and development guidelines.
 
