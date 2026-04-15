@@ -41,11 +41,31 @@ def _validate_positive_int(value: int, name: str, default: int) -> int:
     return value
 
 
-# Base directory is the project root (parent of scripts/)
+# Repository root. Used only to locate bundled templates (e.g. settings.example.yaml).
 BASE_DIR = Path(__file__).parent.parent.resolve()
-# Allow override via environment variable for testing
+
+
+def _resolve_data_dir() -> Path:
+    """Resolve the persistent data directory.
+
+    Precedence:
+      1. ``JOB_SEARCH_DATA_DIR`` environment variable (set to ``/data`` inside the
+         Docker image).
+      2. Repository root, preserving the historical layout for local development.
+    """
+    env_dir = os.environ.get("JOB_SEARCH_DATA_DIR")
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+    return BASE_DIR
+
+
+# Root of all persistent state: config, database, vector store, results, logs.
+# Every filesystem-facing path in this module is resolved relative to DATA_DIR.
+DATA_DIR = _resolve_data_dir()
+
+# User-editable configuration file. Env override is accepted for tests and advanced users.
 CONFIG_FILE = Path(
-    os.environ.get("JOB_SEARCH_CONFIG", BASE_DIR / "config" / "settings.yaml")
+    os.environ.get("JOB_SEARCH_CONFIG", DATA_DIR / "config" / "settings.yaml")
 )
 
 
@@ -225,10 +245,13 @@ class PostFilterConfig:
 
 @dataclass
 class LoggingConfig:
-    """Logging configuration."""
+    """Logging configuration.
+
+    The log file path is fixed at ``{DATA_DIR}/logs/search.log`` — use
+    ``JOB_SEARCH_DATA_DIR`` to move it.
+    """
 
     level: str = "INFO"
-    file: str = "logs/search.log"
     max_size_mb: int = 10
     backup_count: int = 5
     timezone: str = (
@@ -249,11 +272,13 @@ class DatabaseConfig:
 
 @dataclass
 class OutputConfig:
-    """Output paths configuration."""
+    """Output format configuration.
 
-    results_dir: str = "results"
-    data_dir: str = "data"
-    database_file: str = "jobs.db"
+    File system paths are fixed relative to ``DATA_DIR`` — see ``Config``'s
+    ``results_path`` / ``database_path`` / ``chroma_path`` / ``log_path``
+    properties. Only the CSV/Excel toggles live here.
+    """
+
     save_csv: bool = True  # Save CSV files
     save_excel: bool = True  # Save Excel files
 
@@ -274,11 +299,14 @@ class ProfileConfig:
 
 @dataclass
 class VectorSearchConfig:
-    """Vector search configuration for semantic job search."""
+    """Vector search configuration for semantic job search.
+
+    Storage lives at ``{DATA_DIR}/chroma``; the model is always ChromaDB's
+    bundled ONNX embedder (``all-MiniLM-L6-v2``). No tunables are exposed for
+    either — use ``JOB_SEARCH_DATA_DIR`` to relocate.
+    """
 
     enabled: bool = True
-    model_name: str = "all-MiniLM-L6-v2"
-    persist_dir: str = "data/chroma"
     embed_on_save: bool = True
     default_results: int = 20
     backfill_on_startup: bool = True
@@ -346,32 +374,39 @@ class Config:
     vector_search: VectorSearchConfig = field(default_factory=VectorSearchConfig)
 
     @property
-    def results_path(self) -> Path:
-        """Get absolute path to results directory."""
-        return BASE_DIR / self.output.results_dir
+    def data_dir(self) -> Path:
+        """Root of all persistent state (alias of the module-level ``DATA_DIR``)."""
+        return DATA_DIR
 
     @property
-    def data_path(self) -> Path:
-        """Get absolute path to data directory."""
-        return BASE_DIR / self.output.data_dir
+    def config_dir(self) -> Path:
+        """Directory holding ``settings.yaml``."""
+        return DATA_DIR / "config"
+
+    @property
+    def results_path(self) -> Path:
+        """Directory where CSV/Excel exports are written."""
+        return DATA_DIR / "results"
 
     @property
     def database_path(self) -> Path:
-        """Get absolute path to SQLite database."""
-        return self.data_path / self.output.database_file
+        """Absolute path to the SQLite database file."""
+        return DATA_DIR / "db" / "jobs.db"
 
     @property
     def chroma_path(self) -> Path:
-        """Get absolute path to ChromaDB persistence directory."""
-        persist_dir = Path(self.vector_search.persist_dir)
-        if persist_dir.is_absolute():
-            return persist_dir
-        return BASE_DIR / persist_dir
+        """ChromaDB persistence directory."""
+        return DATA_DIR / "chroma"
+
+    @property
+    def logs_dir(self) -> Path:
+        """Directory where log files are written."""
+        return DATA_DIR / "logs"
 
     @property
     def log_path(self) -> Path:
-        """Get absolute path to log file."""
-        return BASE_DIR / self.logging.file
+        """Absolute path to the main log file."""
+        return self.logs_dir / "search.log"
 
     def get_all_queries(self) -> list[str]:
         """Get flattened list of all search queries."""
@@ -592,7 +627,6 @@ def _parse_logging_config(data: dict[str, Any]) -> LoggingConfig:
 
     return LoggingConfig(
         level=logging_data.get("level", "INFO"),
-        file=logging_data.get("file", "logs/search.log"),
         max_size_mb=max_size_mb,
         backup_count=backup_count,
         timezone=logging_data.get("timezone", "UTC"),
@@ -619,10 +653,17 @@ def _parse_database_config(data: dict[str, Any]) -> DatabaseConfig:
 def _parse_output_config(data: dict[str, Any]) -> OutputConfig:
     """Parse output configuration from dict."""
     output_data = data.get("output", {})
+    # Legacy path keys (results_dir / data_dir / database_file) are now fixed
+    # under DATA_DIR and silently ignored. Warn so users notice.
+    legacy_keys = {"results_dir", "data_dir", "database_file"}
+    stale = sorted(legacy_keys & set(output_data.keys()))
+    if stale:
+        logger.warning(
+            "output.%s is ignored in v6+: persistent paths are now fixed relative "
+            "to JOB_SEARCH_DATA_DIR. Remove these keys from settings.yaml.",
+            ", output.".join(stale),
+        )
     return OutputConfig(
-        results_dir=output_data.get("results_dir", "results"),
-        data_dir=output_data.get("data_dir", "data"),
-        database_file=output_data.get("database_file", "jobs.db"),
         save_csv=output_data.get("save_csv", True),
         save_excel=output_data.get("save_excel", True),
     )
@@ -779,10 +820,19 @@ def _parse_vector_search_config(data: dict[str, Any]) -> VectorSearchConfig:
         vector_data.get("batch_size", 100), "batch_size", 100
     )
 
+    # Legacy keys ignored in v6: model is always ChromaDB's default ONNX embedder,
+    # persist_dir is fixed at {DATA_DIR}/chroma.
+    legacy_keys = {"model_name", "persist_dir"}
+    stale = sorted(legacy_keys & set(vector_data.keys()))
+    if stale:
+        logger.warning(
+            "vector_search.%s is ignored in v6+: the ONNX embedder and "
+            "persistence directory are fixed. Remove these keys from settings.yaml.",
+            ", vector_search.".join(stale),
+        )
+
     return VectorSearchConfig(
         enabled=vector_data.get("enabled", True),
-        model_name=vector_data.get("model_name", "all-MiniLM-L6-v2"),
-        persist_dir=vector_data.get("persist_dir", "data/chroma"),
         embed_on_save=vector_data.get("embed_on_save", True),
         default_results=default_results,
         backfill_on_startup=vector_data.get("backfill_on_startup", True),
@@ -897,11 +947,11 @@ def load_config() -> Config:
                 "Consider using environment variable TELEGRAM_BOT_TOKEN or $VAR_NAME syntax."
             )
 
-    # Ensure directories exist
+    # Ensure persistent directories exist under DATA_DIR.
     config.results_path.mkdir(parents=True, exist_ok=True)
-    config.data_path.mkdir(parents=True, exist_ok=True)
+    config.database_path.parent.mkdir(parents=True, exist_ok=True)
     config.chroma_path.mkdir(parents=True, exist_ok=True)
-    config.log_path.parent.mkdir(parents=True, exist_ok=True)
+    config.logs_dir.mkdir(parents=True, exist_ok=True)
 
     return config
 
