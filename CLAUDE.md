@@ -77,8 +77,6 @@ job-search-tool/
 │   ├── search_jobs.py             # Core search engine
 │   ├── scheduler.py               # APScheduler wrapper
 │   ├── notifier.py                # Notification channels
-│   ├── report_generator.py        # Report formatting
-│   ├── analyze_jobs.py            # Analysis utilities
 │   ├── dashboard.py               # Streamlit application
 │   ├── config.py                  # Configuration loader
 │   ├── database.py                # SQLite operations
@@ -102,8 +100,6 @@ job-search-tool/
 │   ├── test_logger.py             # Logger tests
 │   ├── test_exporter.py           # Export and sanitization tests
 │   ├── test_healthcheck.py        # Health check tests
-│   ├── test_report_generator.py   # Report generation tests
-│   ├── test_analyze_jobs.py       # Analysis utility tests
 │   ├── test_search_jobs.py        # Search engine tests
 │   └── test_vector_store.py       # Vector store tests
 │
@@ -115,7 +111,7 @@ job-search-tool/
 │   ├── config/settings.yaml        # User configuration
 │   ├── db/jobs.db                  # SQLite store
 │   ├── chroma/                     # ChromaDB vector store
-│   ├── results/                    # CSV/Excel exports
+│   ├── results/                    # On-demand CSV/Excel exports (dashboard only)
 │   └── logs/search.log             # Rotating log
 │
 ├── Dockerfile                      # Multi-stage, single-target build, tini-init
@@ -221,11 +217,11 @@ def search_jobs(config: Config) -> tuple[pd.DataFrame | None, SearchSummary]:
     """
 ```
 
-> **Note:** `calculate_relevance_score` and `filter_relevant_jobs` have been extracted to `scoring.py`. `save_results` has been extracted to `exporter.py`.
+> **Note:** Scoring lives in `scoring.py` — `calculate_relevance_score` plus the v7 pair `score_jobs` and `partition_by_thresholds` (returning a `Partitions` dataclass). The v6 `filter_relevant_jobs` helper was split into these two. `save_results` was removed entirely; `exporter.py` now only exposes `export_dataframe` for on-demand dashboard exports.
 
 ### 2a. Scoring Engine (`scoring.py`)
 
-Relevance scoring engine, extracted from `search_jobs.py`.
+Relevance scoring engine. Owns the `save_threshold` / `notify_threshold` split.
 
 **Key Functions:**
 
@@ -492,10 +488,6 @@ class JobDBRecord:
     # ...
     bookmarked: bool = False
 
-@dataclass(frozen=True)
-class SearchResult:
-    """Results from a single query."""
-
 @dataclass
 class SearchSummary:
     """Statistics for complete search run."""
@@ -543,6 +535,31 @@ def embed_new_jobs(jobs: list[JobDBRecord], config: Config) -> int:
         Number of jobs embedded.
     """
 ```
+
+### 10. Dashboard (`dashboard.py`)
+
+Streamlit UI. The v7 **Database tab** surfaces all of `database.py`'s retention
+and diagnostic methods as interactive cards:
+
+1. **Health metrics** — total jobs, bookmarked/applied counts, DB size, vector
+   store count, stale/blacklist counters
+2. **Score distribution histogram** — drawn from `db.get_score_distribution()`,
+   with a live slider that previews how many rows `delete_jobs_below_score`
+   would touch
+3. **Four smart-cleanup cards**
+   - Delete below score (`delete_jobs_below_score`)
+   - Delete stale (`delete_stale_jobs`)
+   - Purge blacklist (`purge_blacklist`)
+   - Apply `settings.yaml` retention now (`reconcile_with_config`)
+4. **On-demand export** — calls `exporter.export_dataframe` on the currently
+   filtered rows
+5. **Danger zone** — a confirmation-gated **Full reset** button that invokes
+   `reset_all()`, the only path that bypasses the bookmark/applied SQL
+   protection.
+
+Bookmarked and applied jobs are protected at the SQL level inside every
+automatic DELETE — there is no config toggle for this, and every retention
+card except Full reset honours the invariant.
 
 ---
 
@@ -814,8 +831,6 @@ tests/
 ├── test_logger.py           # Logger setup, formatting, colors
 ├── test_exporter.py         # Export and sanitization tests
 ├── test_healthcheck.py      # Health check tests
-├── test_report_generator.py # Report generation tests
-├── test_analyze_jobs.py     # Analysis utility tests
 ├── test_search_jobs.py      # Search engine tests
 └── test_vector_store.py     # Vector store tests
 ```
@@ -854,11 +869,9 @@ pytest tests/test_models.py::test_job_id_generation -v
 | exporter.py | 14 | Export and sanitization |
 | search_jobs.py | 20 | Search engine |
 | healthcheck.py | 12 | Health check |
-| report_generator.py | 16 | Report generation |
-| analyze_jobs.py | 16 | Analysis utilities |
 | vector_store.py | 34 | Vector store |
 
-Total: **361 tests**.
+Total: **375 tests**.
 
 ---
 
