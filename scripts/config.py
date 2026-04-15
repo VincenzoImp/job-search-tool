@@ -21,6 +21,20 @@ import yaml
 logger = logging.getLogger("job_search.config")
 
 
+# One-shot legacy-key warning set. ``_parse_*`` helpers run both at initial
+# startup and on every ``reload_config()`` call; without this, the same
+# deprecation warning would be logged once per scheduler iteration forever.
+_LEGACY_WARNED: set[str] = set()
+
+
+def _warn_legacy_once(section: str, message: str) -> None:
+    """Emit a deprecation warning exactly once per ``section`` per process."""
+    if section in _LEGACY_WARNED:
+        return
+    _LEGACY_WARNED.add(section)
+    logger.warning("%s", message)
+
+
 def _validate_positive_int(value: int, name: str, default: int) -> int:
     """
     Validate that a value is a positive integer.
@@ -658,14 +672,15 @@ def _parse_output_config(data: dict[str, Any]) -> OutputConfig:
     """Parse output configuration from dict."""
     output_data = data.get("output", {})
     # Legacy path keys (results_dir / data_dir / database_file) are now fixed
-    # under DATA_DIR and silently ignored. Warn so users notice.
+    # under DATA_DIR and silently ignored. Warn once per process.
     legacy_keys = {"results_dir", "data_dir", "database_file"}
     stale = sorted(legacy_keys & set(output_data.keys()))
     if stale:
-        logger.warning(
-            "output.%s is ignored in v6+: persistent paths are now fixed relative "
-            "to JOB_SEARCH_DATA_DIR. Remove these keys from settings.yaml.",
-            ", output.".join(stale),
+        stale_fq = ", ".join(f"output.{k}" for k in stale)
+        _warn_legacy_once(
+            "output_paths",
+            f"{stale_fq} is ignored in v6+: persistent paths are now fixed "
+            "relative to JOB_SEARCH_DATA_DIR. Remove these keys from settings.yaml.",
         )
     return OutputConfig(
         save_csv=output_data.get("save_csv", True),
@@ -712,10 +727,11 @@ def _parse_scheduler_config(data: dict[str, Any]) -> SchedulerConfig:
         raise ValueError(f"max_retries cannot be negative, got {max_retries}")
 
     if "enabled" in scheduler_data:
-        logger.warning(
+        _warn_legacy_once(
+            "scheduler_enabled",
             "scheduler.enabled is ignored in v6+: the operating mode is chosen "
             "by the CLI subcommand (`python main.py scheduler|once`). "
-            "Remove this key from settings.yaml."
+            "Remove this key from settings.yaml.",
         )
 
     return SchedulerConfig(
@@ -835,10 +851,11 @@ def _parse_vector_search_config(data: dict[str, Any]) -> VectorSearchConfig:
     legacy_keys = {"model_name", "persist_dir"}
     stale = sorted(legacy_keys & set(vector_data.keys()))
     if stale:
-        logger.warning(
-            "vector_search.%s is ignored in v6+: the ONNX embedder and "
+        stale_fq = ", ".join(f"vector_search.{k}" for k in stale)
+        _warn_legacy_once(
+            "vector_search_paths",
+            f"{stale_fq} is ignored in v6+: the ONNX embedder and "
             "persistence directory are fixed. Remove these keys from settings.yaml.",
-            ", vector_search.".join(stale),
         )
 
     return VectorSearchConfig(
