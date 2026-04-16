@@ -965,7 +965,7 @@ pytest tests/test_models.py::test_job_id_generation -v
 | job_service.py | 23 | Service layer unit tests |
 | integration | 9 | End-to-end pipeline (score→partition→save→reconcile→API/MCP) |
 
-Total: **405 tests**.
+Total: **483 tests**.
 
 ---
 
