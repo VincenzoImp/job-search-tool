@@ -107,6 +107,7 @@ job-search-tool/
 │   ├── test_healthcheck.py        # Health check tests
 │   ├── test_search_jobs.py        # Search engine tests
 │   ├── test_vector_store.py       # Vector store tests
+│   ├── test_dashboard.py          # Dashboard helper tests
 │   ├── test_api_server.py         # REST API tests
 │   ├── test_mcp_server.py         # MCP server tests
 │   ├── test_job_service.py        # Service layer unit tests
