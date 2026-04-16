@@ -13,14 +13,18 @@ import os
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
-from typing import AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from database import JobDatabase
+from logger import get_logger
 from models import JobDBRecord
+
+if TYPE_CHECKING:
+    from vector_store import JobVectorStore
 
 # ---------------------------------------------------------------------------
 # Path helpers
@@ -95,8 +99,10 @@ class SemanticResultResponse(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
+logger = get_logger("api")
+
 _db: JobDatabase | None = None
-_vs: object | None = None  # JobVectorStore, lazily imported
+_vs: JobVectorStore | None = None
 
 
 def _record_to_response(record: JobDBRecord) -> JobResponse:
@@ -111,13 +117,13 @@ def _record_to_response(record: JobDBRecord) -> JobResponse:
 
 
 def _semantic_to_response(sr: object) -> SemanticResultResponse:
-    meta = sr.metadata or {}  # type: ignore[union-attr]
+    meta = getattr(sr, "metadata", None) or {}
     return SemanticResultResponse(
-        job_id=sr.job_id,  # type: ignore[union-attr]
+        job_id=getattr(sr, "job_id", ""),
         title=meta.get("title"),
         company=meta.get("company"),
         location=meta.get("location"),
-        similarity=round(sr.similarity, 4),  # type: ignore[union-attr]
+        similarity=round(getattr(sr, "similarity", 0.0), 4),
         relevance_score=meta.get("relevance_score"),
         site=meta.get("site"),
         job_url=meta.get("job_url"),
@@ -132,14 +138,14 @@ def _semantic_to_response(sr: object) -> SemanticResultResponse:
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     global _db, _vs
-    print(f"API server starting | DB: {DB_PATH} | Chroma: {CHROMA_PATH}")
+    logger.info("API server starting | DB: %s | Chroma: %s", DB_PATH, CHROMA_PATH)
     _db = JobDatabase(DB_PATH)
     try:
         from vector_store import get_vector_store
 
         _vs = get_vector_store(CHROMA_PATH)
     except Exception as exc:
-        print(f"Warning: vector store unavailable ({exc})")
+        logger.warning("Vector store unavailable: %s", exc)
         _vs = None
     yield
     if _db is not None:
@@ -236,7 +242,7 @@ def search_semantic(
 ) -> list[SemanticResultResponse]:
     if _vs is None:
         raise HTTPException(status_code=503, detail="Vector store not available")
-    results = _vs.search(query=q, n_results=n_results, min_score=min_score, site=site)
+    results = _vs.search(query=q, n_results=n_results, min_score=min_score, site=site)  # type: ignore[union-attr]
     return [_semantic_to_response(r) for r in results]
 
 

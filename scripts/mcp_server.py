@@ -14,11 +14,16 @@ import json
 import os
 from dataclasses import asdict
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from mcp.server.fastmcp import FastMCP
 
 from database import JobDatabase
+from logger import get_logger
 from models import JobDBRecord
+
+if TYPE_CHECKING:
+    from vector_store import JobVectorStore
 
 # ---------------------------------------------------------------------------
 # Path helpers
@@ -32,8 +37,10 @@ CHROMA_PATH = DATA_DIR / "chroma"
 # Singletons (initialised lazily on first tool call)
 # ---------------------------------------------------------------------------
 
+logger = get_logger("mcp")
+
 _db: JobDatabase | None = None
-_vs: object | None = None  # JobVectorStore, lazily imported
+_vs: JobVectorStore | None = None
 
 
 def _get_db() -> JobDatabase:
@@ -43,7 +50,7 @@ def _get_db() -> JobDatabase:
     return _db
 
 
-def _get_vs() -> object | None:
+def _get_vs() -> JobVectorStore | None:
     global _vs
     if _vs is None:
         try:
@@ -154,7 +161,7 @@ def search_similar(query: str, n_results: int = 10) -> str:
     vs = _get_vs()
     if vs is None:
         return json.dumps({"error": "Vector store not available"})
-    results = vs.search(query=query, n_results=n_results)
+    results = vs.search(query=query, n_results=n_results)  # type: ignore[union-attr]
     return json.dumps(
         [
             {
@@ -406,5 +413,5 @@ def get_settings_documentation() -> str:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    print(f"MCP server starting | DB: {DB_PATH} | Chroma: {CHROMA_PATH}")
+    logger.info("MCP server starting | DB: %s | Chroma: %s", DB_PATH, CHROMA_PATH)
     server.run(transport="sse")
