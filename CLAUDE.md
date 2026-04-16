@@ -108,7 +108,9 @@ job-search-tool/
 │   ├── test_search_jobs.py        # Search engine tests
 │   ├── test_vector_store.py       # Vector store tests
 │   ├── test_api_server.py         # REST API tests
-│   └── test_mcp_server.py         # MCP server tests
+│   ├── test_mcp_server.py         # MCP server tests
+│   ├── test_job_service.py        # Service layer unit tests
+│   └── test_integration.py        # End-to-end pipeline tests
 │
 ├── .github/
 │   └── workflows/
@@ -960,8 +962,10 @@ pytest tests/test_models.py::test_job_id_generation -v
 | vector_store.py | 34 | Vector store |
 | api_server.py | 20 | REST API endpoints |
 | mcp_server.py | 18 | MCP tool functions |
+| job_service.py | 23 | Service layer unit tests |
+| integration | 9 | End-to-end pipeline (score→partition→save→reconcile→API/MCP) |
 
-Total: **373 tests**.
+Total: **405 tests**.
 
 ---
 
