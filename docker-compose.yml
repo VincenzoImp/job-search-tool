@@ -59,3 +59,40 @@ services:
     volumes:
       - jobsearch-data:/data
       - ./settings.yaml:/data/config/settings.yaml:ro
+
+  api:
+    image: vincenzoimp/job-search-tool:latest
+    container_name: jobsearch-api
+    restart: unless-stopped
+    command: ["python", "api_server.py"]
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    ports:
+      - "${JOB_SEARCH_API_PORT:-8502}:8502"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - jobsearch-data:/data
+      - ./settings.yaml:/data/config/settings.yaml:ro
+    profiles:
+      - api
+
+  mcp:
+    image: vincenzoimp/job-search-tool:latest
+    container_name: jobsearch-mcp
+    restart: unless-stopped
+    command: ["python", "mcp_server.py"]
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    ports:
+      - "${JOB_SEARCH_MCP_PORT:-3001}:3001"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - jobsearch-data:/data
+    profiles:
+      - mcp
