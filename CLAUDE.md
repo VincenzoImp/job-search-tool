@@ -88,8 +88,9 @@ job-search-tool/
 │   ├── exporter.py                # CSV/Excel export with formula injection protection
 │   ├── vector_store.py            # ChromaDB vector store for semantic search
 │   ├── vector_commands.py         # Vector store backfill and sync utilities
-│   ├── api_server.py              # REST API server (FastAPI, port 8502)
-│   ├── mcp_server.py              # MCP server for LLMs (SSE, port 3001)
+│   ├── job_service.py             # Shared service layer (DB/VS init, serialization, filtering)
+│   ├── api_server.py              # REST API adapter (FastAPI, port 8502)
+│   ├── mcp_server.py              # MCP server adapter for LLMs (SSE, port 3001)
 │   └── healthcheck.py             # Docker health verification
 │
 ├── tests/
@@ -542,14 +543,34 @@ def embed_new_jobs(jobs: list[JobDBRecord], config: Config) -> int:
     """
 ```
 
-### 10. REST API Server (`api_server.py`)
+### 10. Shared Service Layer (`job_service.py`)
+
+Common backend for the dashboard, REST API, and MCP server. Each frontend
+is a thin adapter; `job_service` owns the shared operations.
+
+**Exports:**
+
+| Function | Purpose |
+|----------|---------|
+| `get_db()` / `get_vs()` / `close_db()` | DB and vector store singletons with logged init |
+| `record_to_dict(r)` | Full record → dict with ISO date strings |
+| `record_to_summary(r)` | Compact dict without description (for list views) |
+| `filter_jobs(jobs, ...)` | Score/site/company/bookmark/applied filtering |
+| `sort_jobs_by_score(jobs)` / `sort_jobs_by_date(jobs)` | In-place sorting |
+| `reset_singletons()` | Test helper for clean fixture teardown |
+
+**Implementation notes:**
+- Paths derived from `config.DATA_DIR` (respects `JOB_SEARCH_DATA_DIR` env var)
+- Vector store imported lazily to avoid chromadb dependency at import time
+- `_vs_attempted` flag ensures the import is tried only once (no retry loop)
+
+### 11. REST API Server (`api_server.py`)
 
 FastAPI application providing CRUD access to the job database for scripts,
 automations, and external tools. Listens on port 8502.
 
-**Design:** Thin wrapper over `JobDatabase` and `JobVectorStore`. Does not
-run searches, scoring, or notifications -- it only exposes what's already
-in the database.
+**Design:** Thin adapter over `job_service`. Does not run searches, scoring,
+or notifications -- it only exposes what's already in the database.
 
 **Endpoints:**
 
@@ -569,11 +590,10 @@ in the database.
 **Implementation notes:**
 - Pydantic models for response serialization (`JobResponse`, `StatsResponse`, etc.)
 - CORS middleware allowing all origins (personal tool)
-- DB and vector store initialized via lifespan context manager
-- Paths derived from `JOB_SEARCH_DATA_DIR` env var (default `/data`)
-- Vector store imported lazily to avoid chromadb dependency at import time
+- DB and vector store initialized via `job_service.get_db()` / `get_vs()` in the lifespan context manager
+- Filtering and sorting delegated to `job_service.filter_jobs()` / `sort_jobs_by_score()`
 
-### 11. MCP Server (`mcp_server.py`)
+### 12. MCP Server (`mcp_server.py`)
 
 MCP (Model Context Protocol) server that lets an LLM act as a job search
 assistant. Exposes tools via SSE transport on port 3001.
@@ -601,10 +621,10 @@ profile and config context in the conversation.
 **Implementation notes:**
 - Uses `FastMCP` from the `mcp` SDK with `@server.tool()` decorators
 - All tool return types are `str` (JSON-serialized) per MCP protocol
-- DB and vector store singletons initialized lazily on first tool call
+- DB and vector store accessed via `job_service.get_db()` / `get_vs()`
 - `get_settings_documentation` returns ~3000 chars of embedded reference text
 
-### 12. Dashboard (`dashboard.py`)
+### 13. Dashboard (`dashboard.py`)
 
 Streamlit UI. The v7 **Database tab** surfaces all of `database.py`'s retention
 and diagnostic methods as interactive cards:
