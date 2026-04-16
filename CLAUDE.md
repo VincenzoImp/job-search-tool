@@ -61,6 +61,8 @@ The Job Search Tool is an automated job aggregation platform built on the [JobSp
 | Excel Output | OpenPyXL | Formatted spreadsheet generation |
 | Vector Search | ChromaDB | Semantic job similarity search |
 | Embeddings | ChromaDB DefaultEmbeddingFunction | ONNX-based, bundles `all-MiniLM-L6-v2` (no torch) |
+| REST API | FastAPI + Uvicorn | Programmatic CRUD access |
+| MCP Server | mcp SDK (FastMCP) | LLM tool integration via SSE |
 
 ### Project Structure
 
@@ -86,6 +88,8 @@ job-search-tool/
 │   ├── exporter.py                # CSV/Excel export with formula injection protection
 │   ├── vector_store.py            # ChromaDB vector store for semantic search
 │   ├── vector_commands.py         # Vector store backfill and sync utilities
+│   ├── api_server.py              # REST API server (FastAPI, port 8502)
+│   ├── mcp_server.py              # MCP server for LLMs (SSE, port 3001)
 │   └── healthcheck.py             # Docker health verification
 │
 ├── tests/
@@ -101,7 +105,9 @@ job-search-tool/
 │   ├── test_exporter.py           # Export and sanitization tests
 │   ├── test_healthcheck.py        # Health check tests
 │   ├── test_search_jobs.py        # Search engine tests
-│   └── test_vector_store.py       # Vector store tests
+│   ├── test_vector_store.py       # Vector store tests
+│   ├── test_api_server.py         # REST API tests
+│   └── test_mcp_server.py         # MCP server tests
 │
 ├── .github/
 │   └── workflows/
@@ -536,7 +542,69 @@ def embed_new_jobs(jobs: list[JobDBRecord], config: Config) -> int:
     """
 ```
 
-### 10. Dashboard (`dashboard.py`)
+### 10. REST API Server (`api_server.py`)
+
+FastAPI application providing CRUD access to the job database for scripts,
+automations, and external tools. Listens on port 8502.
+
+**Design:** Thin wrapper over `JobDatabase` and `JobVectorStore`. Does not
+run searches, scoring, or notifications -- it only exposes what's already
+in the database.
+
+**Endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Status check with job count |
+| GET | `/jobs` | List jobs with filtering (limit, offset, min_score, max_score, site, company, bookmarked, applied, sort) |
+| GET | `/jobs/{job_id}` | Single job detail (404 if not found) |
+| GET | `/jobs/search/semantic` | ChromaDB vector search (query param `q`) |
+| GET | `/stats` | Database statistics |
+| GET | `/distribution` | Score distribution histogram bins |
+| POST | `/jobs/{job_id}/bookmark` | Toggle bookmark, returns updated job |
+| POST | `/jobs/{job_id}/apply` | Toggle applied, returns updated job |
+| DELETE | `/jobs/{job_id}` | Blacklist a job |
+| DELETE | `/jobs/below-score/{score}` | Bulk delete below threshold |
+
+**Implementation notes:**
+- Pydantic models for response serialization (`JobResponse`, `StatsResponse`, etc.)
+- CORS middleware allowing all origins (personal tool)
+- DB and vector store initialized via lifespan context manager
+- Paths derived from `JOB_SEARCH_DATA_DIR` env var (default `/data`)
+- Vector store imported lazily to avoid chromadb dependency at import time
+
+### 11. MCP Server (`mcp_server.py`)
+
+MCP (Model Context Protocol) server that lets an LLM act as a job search
+assistant. Exposes tools via SSE transport on port 3001.
+
+**Design philosophy:** The MCP server does NOT read `settings.yaml` or the
+user's profile. It gives the LLM: (a) DB access, (b) knowledge of the
+settings.yaml schema so it can advise on tuning. The user provides their
+profile and config context in the conversation.
+
+**Tools:**
+
+| Tool | Type | Description |
+|------|------|-------------|
+| `list_jobs` | Read | Compact summaries (no description), filterable |
+| `get_job` | Read | Full detail including description |
+| `search_similar` | Read | ChromaDB semantic search |
+| `get_statistics` | Read | DB stats (total, applied, blacklisted, avg score) |
+| `get_score_distribution` | Read | Score histogram bins |
+| `bookmark_job` | Write | Toggle bookmark |
+| `apply_job` | Write | Toggle applied |
+| `delete_job` | Write | Blacklist a job |
+| `delete_jobs_below_score` | Write | Bulk delete below threshold |
+| `get_settings_documentation` | Knowledge | Static reference doc for the full settings.yaml schema |
+
+**Implementation notes:**
+- Uses `FastMCP` from the `mcp` SDK with `@server.tool()` decorators
+- All tool return types are `str` (JSON-serialized) per MCP protocol
+- DB and vector store singletons initialized lazily on first tool call
+- `get_settings_documentation` returns ~3000 chars of embedded reference text
+
+### 12. Dashboard (`dashboard.py`)
 
 Streamlit UI. The v7 **Database tab** surfaces all of `database.py`'s retention
 and diagnostic methods as interactive cards:
@@ -870,8 +938,10 @@ pytest tests/test_models.py::test_job_id_generation -v
 | search_jobs.py | 20 | Search engine |
 | healthcheck.py | 12 | Health check |
 | vector_store.py | 34 | Vector store |
+| api_server.py | 20 | REST API endpoints |
+| mcp_server.py | 18 | MCP tool functions |
 
-Total: **375 tests**.
+Total: **373 tests**.
 
 ---
 
