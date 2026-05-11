@@ -440,12 +440,12 @@ def test_mcp_full_workflow():
         job_service._vs = None
         job_service._vs_attempted = True
 
-        from job_search_tool.mcp_server import (
-            bookmark_job,
-            delete_jobs_below_score,
+        from job_search_tool.web.mcp import (
+            blacklist_jobs,
             get_job,
             get_statistics,
             list_jobs,
+            set_bookmarked,
         )
 
         # list_jobs
@@ -463,17 +463,18 @@ def test_mcp_full_workflow():
         assert "description" in detail
         assert detail["job_id"] == job_id
 
-        # bookmark toggle
-        bm_result = json.loads(bookmark_job(job_id))
+        # explicit bookmark command
+        bm_result = json.loads(set_bookmarked(job_id, True))
         assert bm_result["bookmarked"] is True
 
         # get_statistics
         stats = json.loads(get_statistics())
         assert stats["total_jobs"] == 5
 
-        # delete below score -- protects bookmarked
-        del_result = json.loads(delete_jobs_below_score(15))
-        assert del_result["deleted_count"] >= 1
+        # blacklist a different job
+        deleted_job_id = result[-1]["job_id"]
+        del_result = json.loads(blacklist_jobs([deleted_job_id]))
+        assert del_result["affected_count"] == 1
 
         # Verify bookmarked survived
         detail_after = json.loads(get_job(job_id))
@@ -481,7 +482,7 @@ def test_mcp_full_workflow():
 
         # Stats consistent
         stats_after = json.loads(get_statistics())
-        assert stats_after["total_jobs"] == 5 - del_result["deleted_count"]
+        assert stats_after["total_jobs"] == 4
 
         db.close()
         job_service.reset_singletons()
