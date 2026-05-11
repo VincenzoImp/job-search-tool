@@ -21,18 +21,30 @@ import yaml
 logger = logging.getLogger("job_search.config")
 
 
-# One-shot legacy-key warning set. ``_parse_*`` helpers run both at initial
-# startup and on every ``reload_config()`` call; without this, the same
-# deprecation warning would be logged once per scheduler iteration forever.
-_LEGACY_WARNED: set[str] = set()
+def _require_mapping(value: Any, section: str) -> dict[str, Any]:
+    """Return a section mapping or raise a clear configuration error."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{section} must be a mapping")
+    return value
 
 
-def _warn_legacy_once(section: str, message: str) -> None:
-    """Emit a deprecation warning exactly once per ``section`` per process."""
-    if section in _LEGACY_WARNED:
-        return
-    _LEGACY_WARNED.add(section)
-    logger.warning("%s", message)
+def _get_section(data: dict[str, Any], section: str) -> dict[str, Any]:
+    """Return a named config section as a mapping."""
+    return _require_mapping(data.get(section, {}), section)
+
+
+def _reject_unknown_keys(
+    section: str,
+    values: dict[str, Any],
+    allowed: set[str],
+) -> None:
+    """Fail fast when settings.yaml contains unsupported keys."""
+    unknown = sorted(set(values) - allowed)
+    if unknown:
+        key = f"{section}.{unknown[0]}" if section else unknown[0]
+        raise ValueError(f"Unsupported configuration key: {key}")
 
 
 def _validate_positive_int(value: int, name: str, default: int) -> int:
@@ -55,8 +67,8 @@ def _validate_positive_int(value: int, name: str, default: int) -> int:
     return value
 
 
-# Repository root. Used only to locate bundled templates (e.g. settings.example.yaml).
-BASE_DIR = Path(__file__).parent.parent.resolve()
+# Repository root. Used for local-development defaults and bundled templates.
+BASE_DIR = Path(__file__).resolve().parents[2]
 
 
 def _resolve_data_dir() -> Path:
@@ -450,7 +462,32 @@ def _validate_description_format(fmt: str) -> str:
 
 def _parse_search_config(data: dict[str, Any]) -> SearchConfig:
     """Parse search configuration from dict with validation."""
-    search_data = data.get("search", {})
+    search_data = _get_section(data, "search")
+    _reject_unknown_keys(
+        "search",
+        search_data,
+        {
+            "results_wanted",
+            "hours_old",
+            "job_types",
+            "sites",
+            "locations",
+            "distance",
+            "is_remote",
+            "easy_apply",
+            "offset",
+            "country_indeed",
+            "enforce_annual_salary",
+            "description_format",
+            "verbose",
+            "linkedin_fetch_description",
+            "linkedin_company_ids",
+            "google_search_term",
+            "proxies",
+            "ca_cert",
+            "user_agent",
+        },
+    )
 
     # Validate numeric values
     results_wanted = search_data.get("results_wanted", 50)
@@ -509,7 +546,12 @@ def _parse_search_config(data: dict[str, Any]) -> SearchConfig:
 
 def _parse_scoring_config(data: dict[str, Any]) -> ScoringConfig:
     """Parse scoring configuration from dict."""
-    scoring_data = data.get("scoring", {})
+    scoring_data = _get_section(data, "scoring")
+    _reject_unknown_keys(
+        "scoring",
+        scoring_data,
+        {"save_threshold", "notify_threshold", "weights", "keywords"},
+    )
     defaults = ScoringConfig()
 
     # Create new dicts by merging defaults with user config (no mutation)
@@ -536,7 +578,8 @@ def _parse_scoring_config(data: dict[str, Any]) -> ScoringConfig:
 
 def _parse_parallel_config(data: dict[str, Any]) -> ParallelConfig:
     """Parse parallel configuration from dict with validation."""
-    parallel_data = data.get("parallel", {})
+    parallel_data = _get_section(data, "parallel")
+    _reject_unknown_keys("parallel", parallel_data, {"max_workers"})
 
     max_workers = _validate_positive_int(
         parallel_data.get("max_workers", 3), "max_workers", 3
@@ -549,7 +592,10 @@ def _parse_parallel_config(data: dict[str, Any]) -> ParallelConfig:
 
 def _parse_retry_config(data: dict[str, Any]) -> RetryConfig:
     """Parse retry configuration from dict with validation."""
-    retry_data = data.get("retry", {})
+    retry_data = _get_section(data, "retry")
+    _reject_unknown_keys(
+        "retry", retry_data, {"max_attempts", "base_delay", "backoff_factor"}
+    )
 
     max_attempts = _validate_positive_int(
         retry_data.get("max_attempts", 3), "max_attempts", 3
@@ -572,7 +618,12 @@ def _parse_retry_config(data: dict[str, Any]) -> RetryConfig:
 
 def _parse_throttling_config(data: dict[str, Any]) -> ThrottlingConfig:
     """Parse throttling configuration from dict with validation."""
-    throttling_data = data.get("throttling", {})
+    throttling_data = _get_section(data, "throttling")
+    _reject_unknown_keys(
+        "throttling",
+        throttling_data,
+        {"enabled", "default_delay", "site_delays", "jitter", "rate_limit_cooldown"},
+    )
 
     default_delay = throttling_data.get("default_delay", 2.0)
     if default_delay < 0:
@@ -614,7 +665,12 @@ def _parse_throttling_config(data: dict[str, Any]) -> ThrottlingConfig:
 
 def _parse_post_filter_config(data: dict[str, Any]) -> PostFilterConfig:
     """Parse post-filter configuration from dict with validation."""
-    post_filter_data = data.get("post_filter", {})
+    post_filter_data = _get_section(data, "post_filter")
+    _reject_unknown_keys(
+        "post_filter",
+        post_filter_data,
+        {"enabled", "min_similarity", "check_query_terms", "check_location"},
+    )
 
     min_similarity = post_filter_data.get("min_similarity", 80)
     if not 0 <= min_similarity <= 100:
@@ -632,7 +688,12 @@ def _parse_post_filter_config(data: dict[str, Any]) -> PostFilterConfig:
 
 def _parse_logging_config(data: dict[str, Any]) -> LoggingConfig:
     """Parse logging configuration from dict with validation."""
-    logging_data = data.get("logging", {})
+    logging_data = _get_section(data, "logging")
+    _reject_unknown_keys(
+        "logging",
+        logging_data,
+        {"level", "max_size_mb", "backup_count", "timezone"},
+    )
 
     max_size_mb = _validate_positive_int(
         logging_data.get("max_size_mb", 10), "max_size_mb", 10
@@ -652,9 +713,17 @@ def _parse_logging_config(data: dict[str, Any]) -> LoggingConfig:
 
 def _parse_database_config(data: dict[str, Any]) -> DatabaseConfig:
     """Parse database configuration from dict with validation."""
-    database_data = data.get("database", {})
+    database_data = _get_section(data, "database")
+    _reject_unknown_keys("database", database_data, {"retention"})
 
-    retention_data = database_data.get("retention", {})
+    retention_data = _require_mapping(
+        database_data.get("retention", {}), "database.retention"
+    )
+    _reject_unknown_keys(
+        "database.retention",
+        retention_data,
+        {"max_age_days", "purge_blacklist_after_days"},
+    )
     max_age_days = _validate_positive_int(
         retention_data.get("max_age_days", 30), "retention.max_age_days", 30
     )
@@ -674,7 +743,21 @@ def _parse_database_config(data: dict[str, Any]) -> DatabaseConfig:
 
 def _parse_profile_config(data: dict[str, Any]) -> ProfileConfig:
     """Parse profile configuration from dict."""
-    profile_data = data.get("profile", {})
+    profile_data = _get_section(data, "profile")
+    _reject_unknown_keys(
+        "profile",
+        profile_data,
+        {
+            "name",
+            "current_position",
+            "visiting_position",
+            "research_focus",
+            "publication",
+            "grant",
+            "skills",
+            "target",
+        },
+    )
     defaults = ProfileConfig()
     return ProfileConfig(
         name=profile_data.get("name", defaults.name),
@@ -694,7 +777,18 @@ def _parse_profile_config(data: dict[str, Any]) -> ProfileConfig:
 
 def _parse_scheduler_config(data: dict[str, Any]) -> SchedulerConfig:
     """Parse scheduler configuration from dict with validation."""
-    scheduler_data = data.get("scheduler", {})
+    scheduler_data = _get_section(data, "scheduler")
+    _reject_unknown_keys(
+        "scheduler",
+        scheduler_data,
+        {
+            "interval_hours",
+            "run_on_startup",
+            "retry_on_failure",
+            "retry_delay_minutes",
+            "max_retries",
+        },
+    )
 
     interval_hours = _validate_positive_int(
         scheduler_data.get("interval_hours", 24), "interval_hours", 24
@@ -709,14 +803,6 @@ def _parse_scheduler_config(data: dict[str, Any]) -> SchedulerConfig:
     max_retries = scheduler_data.get("max_retries", 3)
     if max_retries < 0:
         raise ValueError(f"max_retries cannot be negative, got {max_retries}")
-
-    if "enabled" in scheduler_data:
-        _warn_legacy_once(
-            "scheduler_enabled",
-            "scheduler.enabled is ignored in v6+: the operating mode is chosen "
-            "by the CLI subcommand (`python main.py scheduler|once`). "
-            "Remove this key from settings.yaml.",
-        )
 
     return SchedulerConfig(
         interval_hours=interval_hours,
@@ -735,7 +821,21 @@ def _parse_telegram_config(data: dict[str, Any]) -> TelegramConfig:
     2. Config value starting with $ to reference an env var (e.g., "$MY_TOKEN")
     3. Direct value in config file (not recommended for production)
     """
-    telegram_data = data.get("telegram", {})
+    telegram_data = _require_mapping(data.get("telegram", {}), "notifications.telegram")
+    _reject_unknown_keys(
+        "notifications.telegram",
+        telegram_data,
+        {
+            "enabled",
+            "bot_token",
+            "chat_ids",
+            "send_summary",
+            "max_jobs_in_message",
+            "jobs_per_chunk",
+            "include_top_overall",
+            "max_top_overall",
+        },
+    )
 
     max_jobs = _validate_positive_int(
         telegram_data.get("max_jobs_in_message", 20), "max_jobs_in_message", 20
@@ -804,7 +904,8 @@ def _parse_telegram_config(data: dict[str, Any]) -> TelegramConfig:
 
 def _parse_notifications_config(data: dict[str, Any]) -> NotificationsConfig:
     """Parse notifications configuration from dict."""
-    notifications_data = data.get("notifications", {})
+    notifications_data = _get_section(data, "notifications")
+    _reject_unknown_keys("notifications", notifications_data, {"enabled", "telegram"})
     return NotificationsConfig(
         enabled=notifications_data.get("enabled", False),
         telegram=_parse_telegram_config(notifications_data),
@@ -813,7 +914,18 @@ def _parse_notifications_config(data: dict[str, Any]) -> NotificationsConfig:
 
 def _parse_vector_search_config(data: dict[str, Any]) -> VectorSearchConfig:
     """Parse vector search configuration from dict with validation."""
-    vector_data = data.get("vector_search", {})
+    vector_data = _get_section(data, "vector_search")
+    _reject_unknown_keys(
+        "vector_search",
+        vector_data,
+        {
+            "enabled",
+            "embed_on_save",
+            "default_results",
+            "backfill_on_startup",
+            "batch_size",
+        },
+    )
 
     default_results = _validate_positive_int(
         vector_data.get("default_results", 20), "default_results", 20
@@ -822,18 +934,6 @@ def _parse_vector_search_config(data: dict[str, Any]) -> VectorSearchConfig:
     batch_size = _validate_positive_int(
         vector_data.get("batch_size", 100), "batch_size", 100
     )
-
-    # Legacy keys ignored in v6: model is always ChromaDB's default ONNX embedder,
-    # persist_dir is fixed at {DATA_DIR}/chroma.
-    legacy_keys = {"model_name", "persist_dir"}
-    stale = sorted(legacy_keys & set(vector_data.keys()))
-    if stale:
-        stale_fq = ", ".join(f"vector_search.{k}" for k in stale)
-        _warn_legacy_once(
-            "vector_search_paths",
-            f"{stale_fq} is ignored in v6+: the ONNX embedder and "
-            "persistence directory are fixed. Remove these keys from settings.yaml.",
-        )
 
     return VectorSearchConfig(
         enabled=vector_data.get("enabled", True),
@@ -850,7 +950,7 @@ def _parse_queries(data: dict[str, Any]) -> dict[str, list[str]]:
     If no queries are provided in the configuration, returns generic defaults
     suitable for typical software engineering job searches.
     """
-    queries_data = data.get("queries", {})
+    queries_data = _get_section(data, "queries")
     if not queries_data:
         # Generic default queries for software engineering roles
         return {
@@ -901,7 +1001,26 @@ def load_config() -> Config:
     Returns:
         Config object with all settings.
     """
-    data = _load_yaml()
+    data = _require_mapping(_load_yaml(), "settings")
+    _reject_unknown_keys(
+        "",
+        data,
+        {
+            "search",
+            "queries",
+            "scoring",
+            "parallel",
+            "retry",
+            "throttling",
+            "post_filter",
+            "logging",
+            "database",
+            "profile",
+            "scheduler",
+            "notifications",
+            "vector_search",
+        },
+    )
 
     config = Config(
         search=_parse_search_config(data),
