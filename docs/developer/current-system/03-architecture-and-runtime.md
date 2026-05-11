@@ -152,7 +152,6 @@ The search engine builds tasks from every `(query, location)` pair.
 
 - active jobs table
 - deleted jobs blacklist table
-- app metadata table
 
 ### Retrieval layer
 

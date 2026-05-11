@@ -1092,35 +1092,27 @@ class JobDatabase:
         Returns:
             JobDBRecord instance.
         """
-
-        # Helper to safely get column value (handles missing columns in old DBs)
-        def get_col(name: str, default=None):
-            try:
-                return row[name]
-            except (IndexError, KeyError):
-                return default
-
         return JobDBRecord(
             job_id=row["job_id"],
             title=row["title"],
             company=row["company"],
             location=row["location"],
-            job_url=get_col("job_url"),
-            site=get_col("site"),
-            job_type=get_col("job_type"),
-            is_remote=get_col("is_remote"),
-            job_level=get_col("job_level"),
-            description=get_col("description"),
-            date_posted=get_col("date_posted"),
-            min_amount=get_col("min_amount"),
-            max_amount=get_col("max_amount"),
-            currency=get_col("currency"),
-            company_url=get_col("company_url"),
+            job_url=row["job_url"],
+            site=row["site"],
+            job_type=row["job_type"],
+            is_remote=row["is_remote"],
+            job_level=row["job_level"],
+            description=row["description"],
+            date_posted=row["date_posted"],
+            min_amount=row["min_amount"],
+            max_amount=row["max_amount"],
+            currency=row["currency"],
+            company_url=row["company_url"],
             first_seen=row["first_seen"],
             last_seen=row["last_seen"],
             relevance_score=row["relevance_score"],
             applied=bool(row["applied"]),
-            bookmarked=bool(get_col("bookmarked", False)),
+            bookmarked=bool(row["bookmarked"]),
         )
 
     def update_scores_batch(self, updates: list[tuple[str, int]]) -> int:
