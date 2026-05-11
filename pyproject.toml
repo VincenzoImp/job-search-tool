@@ -49,5 +49,6 @@ constraint-dependencies = [
     # Security floors for transitive runtime dependencies audited in CI.
     "gitpython>=3.1.50",
     "python-multipart>=0.0.27",
+    "urllib3>=2.7.0",
 ]
 default-groups = ["dev"]
