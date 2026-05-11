@@ -282,3 +282,19 @@ test("opening a row shows the detail panel", async () => {
 
   expect(screen.getByText("Build Python APIs and data pipelines.")).toBeInTheDocument();
 });
+
+test("changing filters clears the detail panel", async () => {
+  renderJobsPage();
+  await screen.findByText("Backend Engineer");
+
+  fireEvent.click(screen.getByRole("button", { name: "Open Backend Engineer details" }));
+  expect(screen.getByText("Build Python APIs and data pipelines.")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Site"), {
+    target: { value: "linkedin" }
+  });
+
+  await waitFor(() => {
+    expect(screen.queryByText("Build Python APIs and data pipelines.")).not.toBeInTheDocument();
+  });
+});

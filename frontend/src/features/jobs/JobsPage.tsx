@@ -118,10 +118,12 @@ export function JobsPage() {
   useEffect(() => {
     setPage(0);
     setSelectedIds(new Set());
+    setSelectedJob(null);
   }, [filterKey]);
 
   useEffect(() => {
     setSelectedIds(new Set());
+    setSelectedJob(null);
   }, [page]);
 
   const params = useMemo(
@@ -141,6 +143,27 @@ export function JobsPage() {
 
   const { data, isLoading, isError } = useQuery(jobsQuery(params));
   const jobs = data?.items ?? [];
+
+  useEffect(() => {
+    if (data?.total === undefined) {
+      return;
+    }
+
+    const lastPage = Math.max(0, Math.ceil(data.total / PAGE_SIZE) - 1);
+    if (page > lastPage) {
+      setPage(lastPage);
+    }
+  }, [data?.total, page]);
+
+  useEffect(() => {
+    setSelectedJob((current) => {
+      if (!current) {
+        return null;
+      }
+      return jobs.find((job) => job.job_id === current.job_id) ?? null;
+    });
+  }, [jobs]);
+
   const table = useReactTable({
     columns,
     data: jobs,
@@ -352,7 +375,9 @@ export function JobsPage() {
                       style={
                         item
                           ? {
+                              left: 0,
                               position: "absolute",
+                              top: 0,
                               transform: `translateY(${top}px)`
                             }
                           : undefined
