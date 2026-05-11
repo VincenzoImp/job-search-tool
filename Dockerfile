@@ -12,6 +12,19 @@
 FROM ghcr.io/astral-sh/uv:0.11.6 AS uv
 
 # =============================================================================
+# Frontend builder — produce static React assets
+# =============================================================================
+FROM node:22-slim AS frontend-builder
+
+WORKDIR /app/frontend
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+# =============================================================================
 # Builder — install dependencies into a pruned .venv
 # =============================================================================
 # NOTE: Pin to a specific patch version for reproducible builds.
@@ -65,13 +78,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends tini \
     && install -d -o appuser -g appuser \
         /app \
         /data /data/config /data/db /data/chroma /data/results /data/logs \
-        /opt/job-search-tool/defaults
+        /opt/job-search-tool/defaults \
+        /opt/job-search-tool/frontend
 
 WORKDIR /app
 
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 COPY --from=builder --chown=appuser:appuser /app/src /app/src
 COPY --from=builder --chown=appuser:appuser /opt/job-search-tool/defaults/settings.example.yaml /opt/job-search-tool/defaults/settings.example.yaml
+COPY --from=frontend-builder --chown=appuser:appuser /app/frontend/dist /opt/job-search-tool/frontend
 COPY --from=builder /usr/local/bin/job-search-entrypoint /usr/local/bin/job-search-entrypoint
 
 RUN chmod +x /usr/local/bin/job-search-entrypoint

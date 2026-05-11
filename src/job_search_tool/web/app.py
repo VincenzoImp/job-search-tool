@@ -14,6 +14,7 @@ from job_search_tool.job_service import close_db, get_db, logger
 from job_search_tool.project_meta import get_project_version
 from job_search_tool.web.api import router as api_router
 from job_search_tool.web.mcp import create_mcp_app
+from job_search_tool.web.static import dashboard_response, mount_frontend_assets
 
 
 @asynccontextmanager
@@ -43,18 +44,15 @@ def create_app() -> FastAPI:
     )
     app.include_router(api_router)
     app.mount("/mcp", mcp_app)
+    mount_frontend_assets(app)
 
     @app.get("/health")
     def health() -> dict[str, object]:
         return {"status": "ok", "jobs_count": get_db().get_job_count()}
 
-    @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
-        return (
-            "<!doctype html><html><head><title>Job Search</title></head>"
-            "<body><h1>Job Search Web</h1>"
-            "<p>React dashboard assets are not built yet.</p></body></html>"
-        )
+    @app.get("/")
+    def index() -> HTMLResponse:
+        return dashboard_response()
 
     return app
 
