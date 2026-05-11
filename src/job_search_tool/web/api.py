@@ -108,7 +108,9 @@ def _configured_api_token() -> str:
 
 
 def _token_matches(candidate: str | None, expected: str) -> bool:
-    return bool(candidate) and hmac.compare_digest(candidate, expected)
+    if not candidate:
+        return False
+    return hmac.compare_digest(candidate, expected)
 
 
 def require_api_token(
