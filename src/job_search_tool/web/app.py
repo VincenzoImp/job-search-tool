@@ -1,0 +1,66 @@
+"""Unified ASGI web server for Job Search Tool."""
+
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+
+from job_search_tool.job_service import close_db, get_db, logger
+from job_search_tool.project_meta import get_project_version
+from job_search_tool.web.api import router as api_router
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    db = get_db()
+    logger.info("Web server ready | %d jobs", db.get_job_count())
+    yield
+    close_db()
+
+
+def create_app() -> FastAPI:
+    """Create the unified FastAPI application."""
+    app = FastAPI(
+        title="Job Search Tool Web",
+        version=get_project_version(),
+        lifespan=lifespan,
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.include_router(api_router)
+
+    @app.get("/health")
+    def health() -> dict[str, object]:
+        return {"status": "ok", "jobs_count": get_db().get_job_count()}
+
+    @app.get("/", response_class=HTMLResponse)
+    def index() -> str:
+        return (
+            "<!doctype html><html><head><title>Job Search</title></head>"
+            "<body><h1>Job Search Web</h1>"
+            "<p>React dashboard assets are not built yet.</p></body></html>"
+        )
+
+    return app
+
+
+app = create_app()
+
+
+def main() -> None:
+    """Run the unified web server."""
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8501)
+
+
+if __name__ == "__main__":
+    main()
