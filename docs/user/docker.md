@@ -77,7 +77,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Version 9.0.0 uses the current SQLite schema as the runtime baseline and does
+Since 9.0.0, the current SQLite schema is the runtime baseline and does
 not migrate prior database layouts. For a clean major-version start, reset the
 Docker-managed state volume before bringing services back up:
 
