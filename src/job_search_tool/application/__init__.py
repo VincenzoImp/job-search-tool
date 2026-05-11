@@ -1,1 +1,1 @@
-"""Application services shared by API, MCP, and dashboard surfaces."""
+"""Application services shared by the web API, MCP tools, and dashboard."""
