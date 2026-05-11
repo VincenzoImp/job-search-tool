@@ -10,7 +10,7 @@ This reference maps the repository to responsibilities and important contracts.
 | `src/job_search_tool/scheduler.py` | Periodic execution | `JobSearchScheduler`, `create_scheduler()` | Start-to-start scheduling, retry support, signal handling |
 | `src/job_search_tool/search_jobs.py` | External retrieval | `search_jobs()`, `search_single_query()`, `ThrottledExecutor` | Uses `JobSpy`, ThreadPoolExecutor, throttling, retry, incremental dedupe |
 | `src/job_search_tool/scoring.py` | Ranking and partitioning | `calculate_relevance_score()`, `score_jobs()`, `partition_by_thresholds()` | Entirely config-driven keyword scoring plus fuzzy post-filtering |
-| `src/job_search_tool/database.py` | Persistence and lifecycle | `JobDatabase`, `recalculate_all_scores()` | SQLite schema, migrations, blacklist, retention, stats, export |
+| `src/job_search_tool/database.py` | Persistence and lifecycle | `JobDatabase`, `recalculate_all_scores()` | SQLite schema, blacklist, retention, stats, export |
 | `src/job_search_tool/notifier.py` | Attention routing | `NotificationManager`, `TelegramNotifier`, notification dataclasses | Chunked Telegram output, best-effort delivery |
 
 ## Configuration and Models

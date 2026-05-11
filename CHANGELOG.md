@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ignored. Remove old keys such as `scheduler.enabled`, `scoring.threshold`,
   `database.cleanup_enabled`, `database.cleanup_days`,
   `vector_search.model_name`, and `vector_search.persist_dir`.
+- SQLite startup no longer migrates older database layouts or historical job ID
+  formats. Version 8.0.0 uses the current schema as the baseline; replace
+  non-current `jobs.db` files with a fresh database or a current-format backup.
 
 ### Added
 
@@ -73,6 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker image compatibility wrappers under `docker/compat/`.
 - MCP SSE/dual transport runtime code and environment configuration.
 - Legacy config warning/cache code for settings keys that no longer exist.
+- SQLite schema and job ID migration code, including the internal `app_meta`
+  migration table.
 
 ## [7.1.2] - 2026-04-16
 

@@ -65,6 +65,15 @@ docker compose pull
 docker compose --profile api --profile mcp up -d
 ```
 
+Version 8.0.0 treats the current SQLite schema as the runtime baseline and does
+not migrate prior database layouts. For a clean major-version start, reset the
+Docker-managed state volume before bringing services back up:
+
+```bash
+docker compose --profile api --profile mcp down -v
+docker compose --profile api --profile mcp up -d
+```
+
 Release tags are published by GitHub Actions to Docker Hub when `v*` tags are
 pushed.
 

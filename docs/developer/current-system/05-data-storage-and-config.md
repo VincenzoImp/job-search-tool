@@ -103,10 +103,7 @@ Important fields:
 - relevance score
 - applied and bookmarked flags
 
-The system also stores:
-
-- `deleted_jobs` as blacklist memory
-- `app_meta` for internal metadata such as job ID migration state
+The `deleted_jobs` table stores blacklist memory.
 
 ## Job Identity Semantics
 
