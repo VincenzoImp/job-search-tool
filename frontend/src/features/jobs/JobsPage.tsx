@@ -11,7 +11,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { blacklistJobs, setApplied, setBookmarked } from "../../api/client";
 import type { JobRecord } from "../../api/types";
@@ -21,6 +21,8 @@ import { Input } from "../../components/ui/input";
 import { jobsQuery } from "./jobQueries";
 
 type StatusFilter = "all" | "bookmarked" | "applied" | "open";
+
+const PAGE_SIZE = 100;
 
 const columnHelper = createColumnHelper<JobRecord>();
 const columns = [
@@ -91,22 +93,38 @@ export function JobsPage() {
   const [site, setSite] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
   const [remoteOnly, setRemoteOnly] = useState(false);
+  const [page, setPage] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedJob, setSelectedJob] = useState<JobRecord | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+
+  const filterKey = useMemo(
+    () => JSON.stringify({ minScore, remoteOnly, site, status, text }),
+    [minScore, remoteOnly, site, status, text]
+  );
+
+  useEffect(() => {
+    setPage(0);
+    setSelectedIds(new Set());
+  }, [filterKey]);
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [page]);
 
   const params = useMemo(
     () => ({
       applied: status === "applied" ? true : status === "open" ? false : undefined,
-      bookmarked: status === "bookmarked" ? true : undefined,
-      limit: 200,
+      bookmarked: status === "bookmarked" ? true : status === "open" ? false : undefined,
+      limit: PAGE_SIZE,
       min_score: minScore ? Number(minScore) : undefined,
-      offset: 0,
+      offset: page * PAGE_SIZE,
       remote: remoteOnly ? true : undefined,
       site: site || undefined,
       sort: "score" as const,
       text: text || undefined
     }),
-    [minScore, remoteOnly, site, status, text]
+    [minScore, page, remoteOnly, site, status, text]
   );
 
   const { data, isLoading, isError } = useQuery(jobsQuery(params));
@@ -128,20 +146,39 @@ export function JobsPage() {
     ? virtualItems.map((item) => ({ fallbackIndex: item.index, item, row: rows[item.index] }))
     : rows.map((row, index) => ({ item: null, row, fallbackIndex: index }));
 
-  const invalidateJobs = () => queryClient.invalidateQueries({ queryKey: ["jobs"] });
+  const pageCount = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
+  const canGoBack = page > 0;
+  const canGoForward = page + 1 < pageCount;
+
+  const invalidateDashboardData = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+      queryClient.invalidateQueries({ queryKey: ["stats"] }),
+      queryClient.invalidateQueries({ queryKey: ["distribution"] }),
+      queryClient.invalidateQueries({ queryKey: ["cleanup-preview"] })
+    ]);
+  const mutationFailure = (error: Error) => {
+    setMutationError(error.message || "Dashboard command failed");
+  };
   const bookmarkMutation = useMutation({
     mutationFn: (job: JobRecord) => setBookmarked(job.job_id, !job.bookmarked),
-    onSuccess: invalidateJobs
+    onError: mutationFailure,
+    onMutate: () => setMutationError(null),
+    onSuccess: invalidateDashboardData
   });
   const appliedMutation = useMutation({
     mutationFn: (job: JobRecord) => setApplied(job.job_id, !job.applied),
-    onSuccess: invalidateJobs
+    onError: mutationFailure,
+    onMutate: () => setMutationError(null),
+    onSuccess: invalidateDashboardData
   });
   const blacklistMutation = useMutation({
     mutationFn: (jobIds: string[]) => blacklistJobs(jobIds),
+    onError: mutationFailure,
+    onMutate: () => setMutationError(null),
     onSuccess: () => {
       setSelectedIds(new Set());
-      return invalidateJobs();
+      return invalidateDashboardData();
     }
   });
 
@@ -226,7 +263,27 @@ export function JobsPage() {
           <Trash2 aria-hidden="true" size={16} />
           Blacklist selected
         </Button>
+        <div className="page-controls" aria-label="Pagination">
+          <Button disabled={!canGoBack || isLoading} onClick={() => setPage((value) => value - 1)}>
+            Previous page
+          </Button>
+          <span>
+            Page {page + 1} of {pageCount}
+          </span>
+          <Button
+            disabled={!canGoForward || isLoading}
+            onClick={() => setPage((value) => value + 1)}
+          >
+            Next page
+          </Button>
+        </div>
       </div>
+
+      {mutationError ? (
+        <div className="table-state" role="alert">
+          {mutationError}
+        </div>
+      ) : null}
 
       <div className={selectedJob ? "job-layout job-layout--detail" : "job-layout"}>
         <div className="table-shell">
@@ -289,6 +346,7 @@ export function JobsPage() {
                     <span className="row-actions">
                       <Button
                         aria-label={`${job.bookmarked ? "Unsave" : "Save"} ${job.title}`}
+                        disabled={bookmarkMutation.isPending}
                         onClick={() => bookmarkMutation.mutate(job)}
                         title={job.bookmarked ? "Unsave" : "Save"}
                       >
@@ -296,6 +354,7 @@ export function JobsPage() {
                       </Button>
                       <Button
                         aria-label={`Mark ${job.title} ${job.applied ? "not applied" : "applied"}`}
+                        disabled={appliedMutation.isPending}
                         onClick={() => appliedMutation.mutate(job)}
                         title={job.applied ? "Mark not applied" : "Mark applied"}
                       >
