@@ -1,3 +1,4 @@
+import { Button, Card, Chip, Input } from "@heroui/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createColumnHelper, getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -15,14 +16,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { blacklistJobs, setApplied, setBookmarked } from "../../api/client";
 import type { JobRecord } from "../../api/types";
-import { Badge } from "../../components/ui/badge";
-import { Button } from "../../components/ui/button";
-import { Input } from "../../components/ui/input";
 import { jobsQuery } from "./jobQueries";
 
 type StatusFilter = "all" | "bookmarked" | "applied" | "open";
 
 const PAGE_SIZE = 100;
+const JOB_GRID_CLASS =
+  "grid grid-cols-[36px_72px_minmax(220px,2fr)_minmax(160px,1fr)_110px_110px_160px] items-center gap-3 px-4";
 
 const columnHelper = createColumnHelper<JobRecord>();
 const columns = [
@@ -34,24 +34,36 @@ const columns = [
   columnHelper.display({ id: "actions", header: "Actions" })
 ];
 
-function scoreTone(score: number) {
+function scoreColor(score: number): "default" | "success" | "warning" {
   if (score >= 40) {
-    return "good";
+    return "success";
   }
   if (score >= 25) {
     return "warning";
   }
-  return "neutral";
+  return "default";
 }
 
-function statusBadges(job: JobRecord) {
+function statusChip(job: JobRecord) {
   if (job.applied) {
-    return <Badge tone="good">Applied</Badge>;
+    return (
+      <Chip color="success" size="sm" variant="soft">
+        Applied
+      </Chip>
+    );
   }
   if (job.bookmarked) {
-    return <Badge tone="warning">Saved</Badge>;
+    return (
+      <Chip color="warning" size="sm" variant="soft">
+        Saved
+      </Chip>
+    );
   }
-  return <Badge>Open</Badge>;
+  return (
+    <Chip color="default" size="sm" variant="soft">
+      Open
+    </Chip>
+  );
 }
 
 function csvCell(value: string | number | boolean | null) {
@@ -195,84 +207,104 @@ export function JobsPage() {
   };
 
   return (
-    <section className="workspace" aria-label="Jobs">
-      <div className="toolbar toolbar--stacked">
-        <label className="search-field">
-          <Search aria-hidden="true" size={18} />
-          <Input
-            aria-label="Search jobs"
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            placeholder="Search title, company, location"
-          />
-        </label>
-        <label className="filter-field">
-          <span>Minimum score</span>
-          <Input
-            aria-label="Minimum score"
-            min="0"
-            max="100"
-            type="number"
-            value={minScore}
-            onChange={(event) => setMinScore(event.target.value)}
-          />
-        </label>
-        <label className="filter-field">
-          <span>Site</span>
-          <Input
-            aria-label="Site"
-            value={site}
-            onChange={(event) => setSite(event.target.value)}
-          />
-        </label>
-        <label className="filter-field">
-          <span>Status</span>
-          <select
-            aria-label="Status"
-            className="select"
-            value={status}
-            onChange={(event) => setStatus(event.target.value as StatusFilter)}
-          >
-            <option value="all">All</option>
-            <option value="open">Open</option>
-            <option value="bookmarked">Saved</option>
-            <option value="applied">Applied</option>
-          </select>
-        </label>
-        <label className="toggle-field">
-          <input
-            checked={remoteOnly}
-            onChange={(event) => setRemoteOnly(event.target.checked)}
-            type="checkbox"
-          />
-          Remote
-        </label>
-        <Badge>{data?.total ?? 0} jobs</Badge>
-      </div>
+    <section className="mx-auto grid max-w-[1500px] gap-4" aria-label="Jobs">
+      <Card className="border border-slate-200 shadow-sm" variant="default">
+        <div className="flex flex-wrap items-end gap-3 p-4">
+          <label className="grid min-w-72 flex-1 gap-1 text-sm font-medium text-slate-700">
+            <span>Search</span>
+            <div className="relative">
+              <Search
+                aria-hidden="true"
+                className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-slate-400"
+                size={16}
+              />
+              <Input
+                aria-label="Search jobs"
+                className="pl-9"
+                fullWidth
+                onChange={(event) => setText(event.target.value)}
+                placeholder="Search title, company, location"
+                value={text}
+                variant="secondary"
+              />
+            </div>
+          </label>
+          <label className="grid min-w-36 gap-1 text-sm font-medium text-slate-700">
+            <span>Minimum score</span>
+            <Input
+              aria-label="Minimum score"
+              max="100"
+              min="0"
+              onChange={(event) => setMinScore(event.target.value)}
+              type="number"
+              value={minScore}
+              variant="secondary"
+            />
+          </label>
+          <label className="grid min-w-36 gap-1 text-sm font-medium text-slate-700">
+            <span>Site</span>
+            <Input
+              aria-label="Site"
+              onChange={(event) => setSite(event.target.value)}
+              value={site}
+              variant="secondary"
+            />
+          </label>
+          <label className="grid min-w-36 gap-1 text-sm font-medium text-slate-700">
+            <span>Status</span>
+            <select
+              aria-label="Status"
+              className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 shadow-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+              onChange={(event) => setStatus(event.target.value as StatusFilter)}
+              value={status}
+            >
+              <option value="all">All</option>
+              <option value="open">Open</option>
+              <option value="bookmarked">Saved</option>
+              <option value="applied">Applied</option>
+            </select>
+          </label>
+          <label className="flex h-10 items-center gap-2 text-sm font-semibold text-slate-700">
+            <input
+              checked={remoteOnly}
+              className="size-4 accent-emerald-700"
+              onChange={(event) => setRemoteOnly(event.target.checked)}
+              type="checkbox"
+            />
+            Remote
+          </label>
+          <Chip color="default" size="sm" variant="soft">
+            {data?.total ?? 0} jobs
+          </Chip>
+        </div>
+      </Card>
 
-      <div className="bulk-bar">
-        <Button disabled={jobs.length === 0} onClick={() => exportJobsCsv(jobs)}>
-          <Download aria-hidden="true" size={16} />
-          Export CSV
-        </Button>
-        <Button
-          disabled={selectedIds.size === 0 || blacklistMutation.isPending}
-          onClick={() => blacklistMutation.mutate([...selectedIds])}
-          variant="danger"
-        >
-          <Trash2 aria-hidden="true" size={16} />
-          Blacklist selected
-        </Button>
-        <div className="page-controls" aria-label="Pagination">
-          <Button disabled={!canGoBack || isLoading} onClick={() => setPage((value) => value - 1)}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2">
+          <Button isDisabled={jobs.length === 0} onPress={() => exportJobsCsv(jobs)} variant="outline">
+            <Download aria-hidden="true" size={16} />
+            Export CSV
+          </Button>
+          <Button
+            isDisabled={selectedIds.size === 0 || blacklistMutation.isPending}
+            onPress={() => blacklistMutation.mutate([...selectedIds])}
+            variant="danger"
+          >
+            <Trash2 aria-hidden="true" size={16} />
+            Blacklist selected
+          </Button>
+        </div>
+        <div className="flex items-center gap-2 text-sm text-slate-600" aria-label="Pagination">
+          <Button isDisabled={!canGoBack || isLoading} onPress={() => setPage((value) => value - 1)} variant="outline">
             Previous page
           </Button>
-          <span>
+          <span className="min-w-24 text-center">
             Page {page + 1} of {pageCount}
           </span>
           <Button
-            disabled={!canGoForward || isLoading}
-            onClick={() => setPage((value) => value + 1)}
+            isDisabled={!canGoForward || isLoading}
+            onPress={() => setPage((value) => value + 1)}
+            variant="outline"
           >
             Next page
           </Button>
@@ -280,129 +312,145 @@ export function JobsPage() {
       </div>
 
       {mutationError ? (
-        <div className="table-state" role="alert">
+        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
           {mutationError}
         </div>
       ) : null}
 
-      <div className={selectedJob ? "job-layout job-layout--detail" : "job-layout"}>
-        <div className="table-shell">
-          <div className="table-header table-header--jobs" role="row">
-            <span />
-            <span>Score</span>
-            <span>Role</span>
-            <span>Company</span>
-            <span>Site</span>
-            <span>Status</span>
-            <span>Actions</span>
-          </div>
-
-          {isLoading ? <div className="table-state">Loading jobs</div> : null}
-          {isError ? <div className="table-state">Unable to load jobs</div> : null}
-
-          <div className="table-body" ref={scrollRef}>
+      <div className={selectedJob ? "grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]" : "grid gap-4"}>
+        <Card className="overflow-hidden border border-slate-200 shadow-sm" variant="default">
+          <div className="overflow-x-auto">
             <div
-              className="virtual-spacer"
-              style={{ height: virtualItems.length ? rowVirtualizer.getTotalSize() : "auto" }}
+              className={`${JOB_GRID_CLASS} min-w-[980px] border-b border-slate-200 bg-slate-100 py-3 text-xs font-bold uppercase text-slate-500`}
+              role="row"
             >
-              {visibleRows.map(({ item, row, fallbackIndex }) => {
-                const job = row.original;
-                const top = item?.start ?? (fallbackIndex ?? 0) * 58;
-                return (
-                  <div
-                    className="table-row table-row--jobs"
-                    key={job.job_id}
-                    role="row"
-                    style={
-                      item
-                        ? {
-                            position: "absolute",
-                            transform: `translateY(${top}px)`
-                          }
-                        : undefined
-                    }
-                  >
-                    <label className="row-check">
-                      <input
-                        aria-label={`Select ${job.title}`}
-                        checked={selectedIds.has(job.job_id)}
-                        onChange={() => toggleSelected(job.job_id)}
-                        type="checkbox"
-                      />
-                    </label>
-                    <Badge tone={scoreTone(job.relevance_score)}>{job.relevance_score}</Badge>
-                    <button
-                      aria-label={`View ${job.title} details`}
-                      className="job-title-button"
-                      onClick={() => setSelectedJob(job)}
-                      type="button"
+              <span />
+              <span>Score</span>
+              <span>Role</span>
+              <span>Company</span>
+              <span>Site</span>
+              <span>Status</span>
+              <span>Actions</span>
+            </div>
+
+            {isLoading ? <div className="px-4 py-5 text-sm text-slate-500">Loading jobs</div> : null}
+            {isError ? <div className="px-4 py-5 text-sm text-red-700">Unable to load jobs</div> : null}
+
+            <div className="max-h-[min(62vh,720px)] overflow-auto" ref={scrollRef}>
+              <div
+                className="relative min-w-[980px]"
+                style={{ height: virtualItems.length ? rowVirtualizer.getTotalSize() : "auto" }}
+              >
+                {visibleRows.map(({ item, row, fallbackIndex }) => {
+                  const job = row.original;
+                  const top = item?.start ?? (fallbackIndex ?? 0) * 58;
+                  return (
+                    <div
+                      className={`${JOB_GRID_CLASS} min-h-[58px] w-full border-b border-slate-100 bg-white text-sm text-slate-900 hover:bg-slate-50`}
+                      key={job.job_id}
+                      role="row"
+                      style={
+                        item
+                          ? {
+                              position: "absolute",
+                              transform: `translateY(${top}px)`
+                            }
+                          : undefined
+                      }
                     >
-                      <span>{job.title}</span>
-                      <small>{job.location}</small>
-                    </button>
-                    <span>{job.company}</span>
-                    <span>{job.site ?? "unknown"}</span>
-                    <span className="status-stack">{statusBadges(job)}</span>
-                    <span className="row-actions">
-                      <Button
-                        aria-label={`${job.bookmarked ? "Unsave" : "Save"} ${job.title}`}
-                        disabled={bookmarkMutation.isPending}
-                        onClick={() => bookmarkMutation.mutate(job)}
-                        title={job.bookmarked ? "Unsave" : "Save"}
-                      >
-                        <Bookmark aria-hidden="true" size={16} />
-                      </Button>
-                      <Button
-                        aria-label={`Mark ${job.title} ${job.applied ? "not applied" : "applied"}`}
-                        disabled={appliedMutation.isPending}
-                        onClick={() => appliedMutation.mutate(job)}
-                        title={job.applied ? "Mark not applied" : "Mark applied"}
-                      >
-                        <Check aria-hidden="true" size={16} />
-                      </Button>
-                      <Button
-                        aria-label={`Open ${job.title} details`}
+                      <label className="flex items-center">
+                        <input
+                          aria-label={`Select ${job.title}`}
+                          checked={selectedIds.has(job.job_id)}
+                          className="size-4 accent-emerald-700"
+                          onChange={() => toggleSelected(job.job_id)}
+                          type="checkbox"
+                        />
+                      </label>
+                      <Chip color={scoreColor(job.relevance_score)} size="sm" variant="soft">
+                        {job.relevance_score}
+                      </Chip>
+                      <button
+                        aria-label={`View ${job.title} details`}
+                        className="grid gap-0.5 text-left"
                         onClick={() => setSelectedJob(job)}
-                        title="Details"
+                        type="button"
                       >
-                        <PanelRightOpen aria-hidden="true" size={16} />
-                      </Button>
-                    </span>
-                  </div>
-                );
-              })}
+                        <span className="font-semibold text-slate-950">{job.title}</span>
+                        <small className="text-xs text-slate-500">{job.location}</small>
+                      </button>
+                      <span className="truncate">{job.company}</span>
+                      <span className="truncate">{job.site ?? "unknown"}</span>
+                      <span className="flex items-center gap-2">{statusChip(job)}</span>
+                      <span className="flex items-center gap-1.5">
+                        <Button
+                          aria-label={`${job.bookmarked ? "Unsave" : "Save"} ${job.title}`}
+                          isDisabled={bookmarkMutation.isPending}
+                          isIconOnly
+                          onPress={() => bookmarkMutation.mutate(job)}
+                          variant="outline"
+                        >
+                          <Bookmark aria-hidden="true" size={16} />
+                        </Button>
+                        <Button
+                          aria-label={`Mark ${job.title} ${job.applied ? "not applied" : "applied"}`}
+                          isDisabled={appliedMutation.isPending}
+                          isIconOnly
+                          onPress={() => appliedMutation.mutate(job)}
+                          variant="outline"
+                        >
+                          <Check aria-hidden="true" size={16} />
+                        </Button>
+                        <Button
+                          aria-label={`Open ${job.title} details`}
+                          isIconOnly
+                          onPress={() => setSelectedJob(job)}
+                          variant="outline"
+                        >
+                          <PanelRightOpen aria-hidden="true" size={16} />
+                        </Button>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
-        </div>
+        </Card>
 
         {selectedJob ? (
-          <aside className="detail-panel" aria-label="Job detail">
-            <div className="detail-header">
-              <div>
-                <h2>{selectedJob.title}</h2>
-                <p>{selectedJob.company}</p>
+          <Card aria-label="Job detail" className="self-start border border-slate-200 shadow-sm" variant="default">
+            <div className="grid gap-4 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold leading-snug text-slate-950">{selectedJob.title}</h2>
+                  <p className="mt-1 text-sm text-slate-500">{selectedJob.company}</p>
+                </div>
+                <Button aria-label="Close details" isIconOnly onPress={() => setSelectedJob(null)} variant="outline">
+                  <X aria-hidden="true" size={16} />
+                </Button>
               </div>
-              <Button aria-label="Close details" onClick={() => setSelectedJob(null)}>
-                <X aria-hidden="true" size={16} />
-              </Button>
+              <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
+                <Chip color={scoreColor(selectedJob.relevance_score)} size="sm" variant="soft">
+                  {selectedJob.relevance_score}
+                </Chip>
+                <span>{selectedJob.location}</span>
+                <span>{selectedJob.site ?? "unknown"}</span>
+              </div>
+              <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                {selectedJob.description ?? "No description available."}
+              </p>
+              {selectedJob.job_url ? (
+                <a
+                  className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-700 hover:text-emerald-800"
+                  href={selectedJob.job_url}
+                >
+                  <ExternalLink aria-hidden="true" size={16} />
+                  Open job
+                </a>
+              ) : null}
             </div>
-            <div className="detail-meta">
-              <Badge tone={scoreTone(selectedJob.relevance_score)}>
-                {selectedJob.relevance_score}
-              </Badge>
-              <span>{selectedJob.location}</span>
-              <span>{selectedJob.site ?? "unknown"}</span>
-            </div>
-            <p className="detail-description">
-              {selectedJob.description ?? "No description available."}
-            </p>
-            {selectedJob.job_url ? (
-              <a className="external-link" href={selectedJob.job_url}>
-                <ExternalLink aria-hidden="true" size={16} />
-                Open job
-              </a>
-            ) : null}
-          </aside>
+          </Card>
         ) : null}
       </div>
     </section>
