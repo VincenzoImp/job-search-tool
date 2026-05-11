@@ -27,3 +27,14 @@ def test_console_scripts_are_declared():
         "job-search-web": "job_search_tool.web.app:main",
         "job-search-healthcheck": "job_search_tool.healthcheck:main",
     }
+
+
+def test_streamlit_runtime_dependency_is_removed():
+    pyproject = tomllib.loads(
+        (Path(__file__).parent.parent / "pyproject.toml").read_text(encoding="utf-8")
+    )
+
+    assert not any(
+        dependency.startswith("streamlit")
+        for dependency in pyproject["project"]["dependencies"]
+    )

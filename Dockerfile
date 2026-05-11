@@ -2,9 +2,8 @@
 
 # Job Search Tool — Docker container
 #
-# Single image containing the scheduler, Streamlit dashboard, REST API, MCP
-# server, and every runtime dependency. Compose services differ only by their
-# command.
+# Single image containing the scheduler and unified web server. The web process
+# serves the React dashboard, REST API, and MCP endpoint from one runtime.
 #
 # Everything persistent (config, database, vector store, results, logs) lives
 # under a single volume at /data. Mount it and that's it.
@@ -53,7 +52,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
          \) -exec rm -rf {} +
 
 # =============================================================================
-# Runtime — single stage used by both the scheduler and the dashboard
+# Runtime — single stage used by both the scheduler and unified web server
 # =============================================================================
 FROM python:3.11.12-slim AS runtime
 
