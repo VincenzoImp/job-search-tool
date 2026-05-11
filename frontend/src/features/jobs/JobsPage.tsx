@@ -1,7 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createColumnHelper, getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Bookmark, Check, ExternalLink, PanelRightOpen, Search, Trash2, X } from "lucide-react";
+import {
+  Bookmark,
+  Check,
+  Download,
+  ExternalLink,
+  PanelRightOpen,
+  Search,
+  Trash2,
+  X
+} from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
 import { blacklistJobs, setApplied, setBookmarked } from "../../api/client";
@@ -41,6 +50,37 @@ function statusBadges(job: JobRecord) {
     return <Badge tone="warning">Saved</Badge>;
   }
   return <Badge>Open</Badge>;
+}
+
+function csvCell(value: string | number | boolean | null) {
+  return `"${String(value ?? "").replaceAll("\"", "\"\"")}"`;
+}
+
+function exportJobsCsv(jobs: JobRecord[]) {
+  const columns = ["title", "company", "location", "site", "relevance_score", "applied", "bookmarked"];
+  const lines = [
+    columns.join(","),
+    ...jobs.map((job) =>
+      [
+        job.title,
+        job.company,
+        job.location,
+        job.site,
+        job.relevance_score,
+        job.applied,
+        job.bookmarked
+      ]
+        .map(csvCell)
+        .join(",")
+    )
+  ];
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "jobs.csv";
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 export function JobsPage() {
@@ -174,6 +214,10 @@ export function JobsPage() {
       </div>
 
       <div className="bulk-bar">
+        <Button disabled={jobs.length === 0} onClick={() => exportJobsCsv(jobs)}>
+          <Download aria-hidden="true" size={16} />
+          Export CSV
+        </Button>
         <Button
           disabled={selectedIds.size === 0 || blacklistMutation.isPending}
           onClick={() => blacklistMutation.mutate([...selectedIds])}

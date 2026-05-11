@@ -187,6 +187,31 @@ test("selected blacklist action sends selected job ids", async () => {
   await waitFor(() => expect(blacklistJobs).toHaveBeenCalledWith(["job-1"]));
 });
 
+test("exports the current rows as CSV", async () => {
+  const createObjectUrl = vi.fn(() => "blob:jobs");
+  const revokeObjectUrl = vi.fn();
+  const click = vi
+    .spyOn(HTMLAnchorElement.prototype, "click")
+    .mockImplementation(() => undefined);
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: createObjectUrl
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: revokeObjectUrl
+  });
+
+  renderJobsPage();
+  await screen.findByText("Backend Engineer");
+
+  fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
+
+  expect(createObjectUrl).toHaveBeenCalledTimes(1);
+  expect(click).toHaveBeenCalledTimes(1);
+  expect(revokeObjectUrl).toHaveBeenCalledWith("blob:jobs");
+});
+
 test("opening a row shows the detail panel", async () => {
   renderJobsPage();
   await screen.findByText("Backend Engineer");

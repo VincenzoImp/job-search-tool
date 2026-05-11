@@ -69,3 +69,5 @@ export interface CleanupResponse {
   protected_applied: number;
   total_deleted: number;
 }
+
+export type ScoreDistribution = [number, number][];

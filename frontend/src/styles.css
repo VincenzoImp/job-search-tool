@@ -237,6 +237,7 @@ input {
 
 .bulk-bar {
   display: flex;
+  gap: 8px;
   justify-content: flex-end;
 }
 
@@ -393,6 +394,96 @@ input {
   text-decoration: none;
 }
 
+.metric-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.metric-grid--compact {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.metric,
+.panel {
+  border: 1px solid #cfd8d3;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.metric {
+  display: grid;
+  gap: 8px;
+  min-height: 96px;
+  padding: 16px;
+}
+
+.metric span {
+  color: #65726d;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.metric strong {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.panel {
+  padding: 16px;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.panel-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.panel-total {
+  font-size: 28px;
+}
+
+.bars {
+  display: grid;
+  gap: 10px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: 10px;
+}
+
+.bar-track {
+  height: 12px;
+  border-radius: 999px;
+  background: #edf1ef;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #0e5f4f;
+}
+
+.danger-strip {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 16px;
+}
+
 @media (max-width: 760px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -424,6 +515,17 @@ input {
   .filter-field,
   .select {
     width: 100%;
+  }
+
+  .metric-grid,
+  .metric-grid--compact {
+    grid-template-columns: 1fr;
+  }
+
+  .danger-strip,
+  .bulk-bar {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .job-layout--detail {

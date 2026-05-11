@@ -4,6 +4,7 @@ import type {
   JobListParams,
   JobListResponse,
   JobRecord,
+  ScoreDistribution,
   StatsResponse
 } from "./types";
 
@@ -76,6 +77,14 @@ export function getStats(): Promise<StatsResponse> {
   return request<StatsResponse>("/stats");
 }
 
+export function getDistribution(): Promise<ScoreDistribution> {
+  return request<ScoreDistribution>("/distribution");
+}
+
 export function previewCleanup(): Promise<CleanupResponse> {
   return request<CleanupResponse>("/cleanup/preview");
+}
+
+export function runCleanup(): Promise<CleanupResponse> {
+  return request<CleanupResponse>("/cleanup/run", { method: "POST" });
 }
