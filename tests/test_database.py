@@ -2,18 +2,18 @@
 
 import hashlib
 import sqlite3
-import sys
 from datetime import date
-from pathlib import Path
 
 import pandas as pd
 
-# Add scripts directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-
-from config import Config, DatabaseConfig, RetentionConfig, ScoringConfig
-from database import ReconciliationReport
-from models import Job
+from job_search_tool.config import (
+    Config,
+    DatabaseConfig,
+    RetentionConfig,
+    ScoringConfig,
+)
+from job_search_tool.database import ReconciliationReport
+from job_search_tool.models import Job
 
 
 class TestJobDatabase:
@@ -22,6 +22,10 @@ class TestJobDatabase:
     def test_database_creation(self, temp_db):
         """Test database and tables are created."""
         assert temp_db.db_path.exists()
+
+    def test_database_connection_access_is_lock_guarded(self, temp_db):
+        """Test persistent connection access is guarded by an instance lock."""
+        assert hasattr(temp_db, "_lock")
 
     def test_save_new_job(self, temp_db, sample_job):
         """Test saving a new job returns True."""
@@ -313,7 +317,7 @@ class TestJobDatabase:
 
     def test_get_top_jobs(self, temp_db):
         """Test get_top_jobs returns jobs sorted by score."""
-        from models import Job
+        from job_search_tool.models import Job
 
         # Create jobs with different scores
         jobs = [
@@ -355,7 +359,7 @@ class TestJobDatabase:
 
     def test_get_top_jobs_with_min_score(self, temp_db):
         """Test get_top_jobs respects min_score filter."""
-        from models import Job
+        from job_search_tool.models import Job
 
         # Create jobs with different scores
         jobs = [
@@ -396,7 +400,7 @@ class TestJobDatabase:
 
     def test_get_job_count(self, temp_db):
         """Test get_job_count returns correct count."""
-        from models import Job
+        from job_search_tool.models import Job
 
         # Empty database
         assert temp_db.get_job_count() == 0
@@ -414,8 +418,8 @@ class TestJobDatabase:
 
     def test_database_migrates_legacy_job_ids(self, temp_db_path):
         """Test old hash IDs are normalized on first open without losing records."""
-        from database import JobDatabase
-        from models import generate_job_id
+        from job_search_tool.database import JobDatabase
+        from job_search_tool.models import generate_job_id
 
         def legacy_job_id(title: str, company: str, location: str) -> str:
             raw = f"{title}|{company}|{location}".lower()

@@ -17,9 +17,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pandas as pd
 import pytest
 
-# Ensure scripts directory is in path for all tests
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-
 # Mock jobspy before any imports that might use it
 # This prevents ImportError when jobspy is not installed in test environment
 sys.modules["jobspy"] = MagicMock()
@@ -33,7 +30,7 @@ sys.modules["jobspy"] = MagicMock()
 @pytest.fixture(autouse=True)
 def _reset_config_singleton():
     """Reset the config singleton and legacy-warning cache between tests."""
-    import config as config_module
+    import job_search_tool.config as config_module
 
     original = config_module._config
     original_warned = config_module._LEGACY_WARNED.copy()
@@ -71,7 +68,7 @@ def sample_job_data() -> dict:
 @pytest.fixture
 def sample_job(sample_job_data):
     """Create a sample Job instance."""
-    from models import Job
+    from job_search_tool.models import Job
 
     return Job.from_dict(sample_job_data)
 
@@ -79,7 +76,7 @@ def sample_job(sample_job_data):
 @pytest.fixture
 def sample_job_db_record(sample_job):
     """Create a sample JobDBRecord from a Job."""
-    from models import JobDBRecord
+    from job_search_tool.models import JobDBRecord
 
     return JobDBRecord.from_job(
         sample_job,
@@ -92,7 +89,7 @@ def sample_job_db_record(sample_job):
 @pytest.fixture
 def multiple_jobs() -> list:
     """Create multiple Job instances for batch testing."""
-    from models import Job
+    from job_search_tool.models import Job
 
     jobs_data = [
         {
@@ -164,7 +161,7 @@ def multiple_jobs_dataframe() -> pd.DataFrame:
 @pytest.fixture
 def default_config():
     """Create a default Config instance with all defaults."""
-    from config import Config
+    from job_search_tool.config import Config
 
     return Config()
 
@@ -172,7 +169,7 @@ def default_config():
 @pytest.fixture
 def scoring_config():
     """Create a ScoringConfig for testing scoring functionality."""
-    from config import ScoringConfig
+    from job_search_tool.config import ScoringConfig
 
     return ScoringConfig(
         save_threshold=0,
@@ -193,7 +190,7 @@ def scoring_config():
 @pytest.fixture
 def test_config(scoring_config):
     """Create a Config instance optimized for testing."""
-    from config import (
+    from job_search_tool.config import (
         Config,
         DatabaseConfig,
         LoggingConfig,
@@ -231,7 +228,7 @@ def test_config(scoring_config):
 @pytest.fixture
 def telegram_config():
     """Create a TelegramConfig for testing notifications."""
-    from config import TelegramConfig
+    from job_search_tool.config import TelegramConfig
 
     return TelegramConfig(
         enabled=True,
@@ -248,7 +245,7 @@ def telegram_config():
 @pytest.fixture
 def notifications_config(telegram_config):
     """Create a NotificationsConfig for testing."""
-    from config import NotificationsConfig
+    from job_search_tool.config import NotificationsConfig
 
     return NotificationsConfig(
         enabled=True,
@@ -271,7 +268,7 @@ def temp_db_path() -> Generator[Path, None, None]:
 @pytest.fixture
 def temp_db(temp_db_path) -> Generator:
     """Create a temporary JobDatabase instance."""
-    from database import JobDatabase
+    from job_search_tool.database import JobDatabase
 
     db = JobDatabase(temp_db_path)
     yield db
@@ -293,7 +290,7 @@ def populated_db(temp_db, multiple_jobs):
 @pytest.fixture
 def mock_jobspy():
     """Mock the jobspy scrape_jobs function."""
-    with patch("search_jobs.scrape_jobs") as mock:
+    with patch("job_search_tool.search_jobs.scrape_jobs") as mock:
         # Return an empty DataFrame by default
         mock.return_value = pd.DataFrame()
         yield mock
@@ -302,7 +299,7 @@ def mock_jobspy():
 @pytest.fixture
 def mock_jobspy_with_results(sample_dataframe):
     """Mock jobspy to return sample results."""
-    with patch("search_jobs.scrape_jobs") as mock:
+    with patch("job_search_tool.search_jobs.scrape_jobs") as mock:
         mock.return_value = sample_dataframe.copy()
         yield mock
 
@@ -310,7 +307,7 @@ def mock_jobspy_with_results(sample_dataframe):
 @pytest.fixture
 def mock_telegram_bot():
     """Mock the Telegram Bot for notification testing."""
-    with patch("notifier.Bot") as mock_bot_class:
+    with patch("job_search_tool.notifier.Bot") as mock_bot_class:
         mock_bot = AsyncMock()
         mock_bot.send_message = AsyncMock(return_value=MagicMock())
         mock_bot_class.return_value = mock_bot
@@ -325,7 +322,7 @@ def mock_telegram_bot():
 @pytest.fixture
 def sample_notification_data(sample_job_db_record):
     """Create sample NotificationData for testing."""
-    from notifier import NotificationData
+    from job_search_tool.notifier import NotificationData
 
     return NotificationData(
         run_timestamp=datetime.now(),
@@ -342,7 +339,7 @@ def sample_notification_data(sample_job_db_record):
 @pytest.fixture
 def empty_notification_data():
     """Create empty NotificationData for testing edge cases."""
-    from notifier import NotificationData
+    from job_search_tool.notifier import NotificationData
 
     return NotificationData(
         run_timestamp=datetime.now(),

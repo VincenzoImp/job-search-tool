@@ -55,8 +55,8 @@ def _validate_positive_int(value: int, name: str, default: int) -> int:
     return value
 
 
-# Repository root. Used only to locate bundled templates (e.g. settings.example.yaml).
-BASE_DIR = Path(__file__).parent.parent.resolve()
+# Repository root. Used for local-development defaults and bundled templates.
+BASE_DIR = Path(__file__).resolve().parents[2]
 
 
 def _resolve_data_dir() -> Path:
@@ -714,7 +714,7 @@ def _parse_scheduler_config(data: dict[str, Any]) -> SchedulerConfig:
         _warn_legacy_once(
             "scheduler_enabled",
             "scheduler.enabled is ignored in v6+: the operating mode is chosen "
-            "by the CLI subcommand (`python main.py scheduler|once`). "
+            "by the CLI subcommand (`job-search scheduler|once`). "
             "Remove this key from settings.yaml.",
         )
 

@@ -8,6 +8,7 @@ and track application status.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -17,11 +18,11 @@ from typing import TYPE_CHECKING, Generator
 import pandas as pd
 
 if TYPE_CHECKING:
-    from config import Config
+    from job_search_tool.config import Config
 
-from logger import get_logger
-from models import Job, JobDBRecord, generate_job_id
-from scoring import calculate_relevance_score
+from job_search_tool.logger import get_logger
+from job_search_tool.models import Job, JobDBRecord, generate_job_id
+from job_search_tool.scoring import calculate_relevance_score
 
 _JOB_FIELD_NAMES = (
     "job_id",
@@ -203,6 +204,7 @@ class JobDatabase:
         """
         self.db_path = db_path
         self.logger = get_logger("database")
+        self._lock = threading.RLock()
         self._conn: sqlite3.Connection | None = None
         self._init_db()
 
@@ -253,12 +255,13 @@ class JobDatabase:
 
     def close(self) -> None:
         """Close the persistent database connection."""
-        if self._conn is not None:
-            try:
-                self._conn.close()
-            except sqlite3.Error:
-                pass
-            self._conn = None
+        with self._lock:
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                except sqlite3.Error:
+                    pass
+                self._conn = None
 
     def __enter__(self):
         return self
@@ -281,19 +284,20 @@ class JobDatabase:
         Yields:
             SQLite connection.
         """
-        if self._conn is None:
-            self._conn = sqlite3.connect(
-                self.db_path,
-                detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
-                check_same_thread=False,
-            )
-            self._conn.row_factory = sqlite3.Row
-        try:
-            yield self._conn
-        except sqlite3.Error:
-            # On error, close and discard the connection so next call gets a fresh one
-            self.close()
-            raise
+        with self._lock:
+            if self._conn is None:
+                self._conn = sqlite3.connect(
+                    self.db_path,
+                    detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
+                    check_same_thread=False,
+                )
+                self._conn.row_factory = sqlite3.Row
+            try:
+                yield self._conn
+            except sqlite3.Error:
+                # Discard the connection so next call gets a fresh one.
+                self.close()
+                raise
 
     def _batch_query_existing_ids(self, job_ids: list[str]) -> set[str]:
         """

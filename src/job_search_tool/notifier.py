@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from logger import get_logger
+from job_search_tool.logger import get_logger
 
 try:
     from telegram import Bot
@@ -29,8 +29,8 @@ POSITION_EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️�
 MAX_EMOJI_POSITIONS = 10
 
 if TYPE_CHECKING:
-    from config import Config, TelegramConfig
-    from models import JobDBRecord
+    from job_search_tool.config import Config, TelegramConfig
+    from job_search_tool.models import JobDBRecord
 
 
 @dataclass

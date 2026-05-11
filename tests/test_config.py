@@ -1,14 +1,10 @@
 """Tests for config module."""
 
-import sys
 from pathlib import Path
 
 import pytest
 
-# Add scripts directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-
-from config import (
+from job_search_tool.config import (
     Config,
     _parse_parallel_config,
     _parse_logging_config,
@@ -195,7 +191,7 @@ class TestSchedulerConfigValidation:
 
     def test_legacy_enabled_key_is_accepted_and_recorded(self):
         """Legacy scheduler.enabled parses and leaves a marker in ``_LEGACY_WARNED``."""
-        import config as config_module
+        import job_search_tool.config as config_module
 
         # Resolve the parser from ``config_module`` rather than the file-level
         # import, so another test performing ``importlib.reload(config)``
@@ -211,7 +207,7 @@ class TestSchedulerConfigValidation:
 
     def test_legacy_enabled_key_is_one_shot(self):
         """The one-shot guard keeps ``_LEGACY_WARNED`` idempotent across parses."""
-        import config as config_module
+        import job_search_tool.config as config_module
 
         parse = config_module._parse_scheduler_config
         config_module._LEGACY_WARNED.clear()
@@ -327,7 +323,7 @@ class TestConfigPaths:
         # config.DATA_DIR is resolved at import time, so re-import the module.
         import importlib
 
-        import config as config_module
+        import job_search_tool.config as config_module
 
         importlib.reload(config_module)
         try:
@@ -354,7 +350,7 @@ class TestScoringConfigValidation:
         assert cfg.notify_threshold == 20
 
     def test_notify_must_be_ge_save(self, tmp_path, monkeypatch):
-        import config as config_module
+        import job_search_tool.config as config_module
 
         yaml_file = tmp_path / "settings.yaml"
         yaml_file.write_text(
@@ -376,7 +372,7 @@ class TestDatabaseRetentionConfig:
 
     def test_unknown_database_keys_are_ignored(self):
         """Old cleanup_* keys must be silently ignored, not translated."""
-        import config as config_module
+        import job_search_tool.config as config_module
 
         cfg = config_module._parse_database_config(
             {"database": {"cleanup_enabled": True, "cleanup_days": 10}}

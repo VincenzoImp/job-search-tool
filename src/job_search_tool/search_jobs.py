@@ -27,10 +27,10 @@ from tenacity import (
     wait_exponential,
 )
 
-from config import Config
-from logger import ProgressLogger, get_logger, log_section
-from models import SearchSummary, generate_job_id
-from scoring import fuzzy_post_filter
+from job_search_tool.config import Config
+from job_search_tool.logger import ProgressLogger, get_logger, log_section
+from job_search_tool.models import SearchSummary, generate_job_id
+from job_search_tool.scoring import fuzzy_post_filter
 
 
 # Thread-safe lock for shared data structures
