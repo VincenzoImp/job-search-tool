@@ -61,7 +61,7 @@ public internet.
 | Scheduler | `job-search scheduler` | none | continuous search loop |
 | Dashboard | `job-search dashboard` | `http://127.0.0.1:8501` | human review UI |
 | REST API | `job-search-api` | `http://127.0.0.1:8502` | optional `JOB_SEARCH_API_TOKEN` |
-| MCP | `job-search-mcp` | `http://127.0.0.1:3001/mcp` | streamable HTTP plus legacy SSE |
+| MCP | `job-search-mcp` | `http://127.0.0.1:3001/mcp` | streamable HTTP |
 
 ## Documentation
 

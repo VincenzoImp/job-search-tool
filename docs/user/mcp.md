@@ -23,18 +23,9 @@ Default endpoint:
 http://127.0.0.1:3001/mcp
 ```
 
-## Transports
+## Transport
 
-`JOB_SEARCH_MCP_TRANSPORT` controls which MCP transport is exposed:
-
-| Value | Routes | Use |
-|-------|--------|-----|
-| `dual` | `/mcp`, `/sse`, `/messages` | default, broad compatibility |
-| `streamable-http` | `/mcp` | modern streamable HTTP MCP clients |
-| `sse` | `/sse`, `/messages` | legacy SSE clients |
-
-The default is `dual` so local users do not need separate server processes for
-different MCP hosts.
+The MCP server exposes streamable HTTP at `/mcp`.
 
 ## LAN Use
 

@@ -11,8 +11,6 @@ Run: ``job-search-mcp`` (MCP on port 3001).
 from __future__ import annotations
 
 import json
-import os
-from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 
@@ -32,14 +30,6 @@ from job_search_tool.settings_reference import get_settings_reference
 # ---------------------------------------------------------------------------
 
 server = FastMCP("job-search-tool", host="0.0.0.0", port=3001)
-
-MCPTransport = Literal["dual", "streamable-http", "sse"]
-_MCP_TRANSPORT_ALIASES: dict[str, MCPTransport] = {
-    "dual": "dual",
-    "streamable-http": "streamable-http",
-    "streamable_http": "streamable-http",
-    "sse": "sse",
-}
 
 
 # ---- DB read tools --------------------------------------------------------
@@ -198,61 +188,10 @@ def get_settings_documentation() -> str:
 # ---------------------------------------------------------------------------
 
 
-def get_mcp_transport() -> MCPTransport:
-    """Return the configured MCP transport.
-
-    Dual mode exposes `/mcp` for streamable HTTP clients such as Codex and
-    `/sse` for legacy SSE clients on the same port.
-    """
-    raw_transport = os.environ.get("JOB_SEARCH_MCP_TRANSPORT", "dual")
-    normalized = raw_transport.strip().lower()
-    try:
-        return _MCP_TRANSPORT_ALIASES[normalized]
-    except KeyError as exc:
-        supported = ", ".join(sorted(_MCP_TRANSPORT_ALIASES))
-        raise ValueError(
-            "Unsupported JOB_SEARCH_MCP_TRANSPORT "
-            f"{raw_transport!r}; expected one of: {supported}"
-        ) from exc
-
-
-def create_dual_mcp_app():
-    """Create one ASGI app exposing both streamable HTTP and SSE MCP routes."""
-    from starlette.applications import Starlette
-
-    streamable_app = server.streamable_http_app()
-    sse_app = server.sse_app()
-    return Starlette(
-        debug=server.settings.debug,
-        routes=[*streamable_app.routes, *sse_app.routes],
-        lifespan=lambda app: server.session_manager.run(),
-    )
-
-
-def run_dual_mcp_server() -> None:
-    """Run one Uvicorn server with both MCP transports mounted."""
-    import uvicorn
-
-    config = uvicorn.Config(
-        create_dual_mcp_app(),
-        host=server.settings.host,
-        port=server.settings.port,
-        log_level=server.settings.log_level.lower(),
-    )
-    uvicorn.Server(config).run()
-
-
 def run_mcp_server() -> None:
-    """Start the MCP server with the configured transport."""
-    transport = get_mcp_transport()
-    if transport == "dual":
-        logger.info("MCP server starting on port 3001 (/mcp and /sse)")
-        run_dual_mcp_server()
-        return
-
-    path = "/mcp" if transport == "streamable-http" else "/sse"
-    logger.info("MCP server starting on port 3001 (%s at %s)", transport, path)
-    server.run(transport=transport)
+    """Start the MCP server with streamable HTTP on ``/mcp``."""
+    logger.info("MCP server starting on port 3001 (streamable HTTP at /mcp)")
+    server.run(transport="streamable-http")
 
 
 if __name__ == "__main__":

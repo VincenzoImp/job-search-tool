@@ -39,8 +39,6 @@ def _prepare_dashboard_app(
               test: ["software engineer"]
             notifications:
               enabled: false
-            scheduler:
-              enabled: false
             vector_search:
               enabled: false
             """

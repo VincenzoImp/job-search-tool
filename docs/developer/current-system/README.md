@@ -1,8 +1,7 @@
 # Current System Documentation
 
-These documents describe the current implementation and product model. They were
-promoted from the previous `wiki/current-system` material so the repository has
-one canonical documentation tree.
+These documents describe the current implementation and product model. They are
+the canonical developer reference for the repository.
 
 Start with:
 

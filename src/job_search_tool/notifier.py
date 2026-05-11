@@ -292,23 +292,6 @@ class TelegramNotifier(BaseNotifier):
 
         return "\n".join(lines)
 
-    def _build_summary_message(self, data: NotificationData) -> str:
-        """
-        Build the summary notification message (legacy single-message format).
-
-        This is kept for backward compatibility but send_notification now uses
-        chunked messages for large job lists.
-
-        Args:
-            data: Notification data.
-
-        Returns:
-            Formatted message string.
-        """
-        jobs_to_send = list(data.new_jobs)[: self.config.max_jobs_in_message]
-        total_top_overall = len(data.top_jobs_overall) if data.top_jobs_overall else 0
-        return self._build_header_message(data, len(jobs_to_send), total_top_overall)
-
     async def send_notification(self, data: NotificationData) -> bool:
         """
         Send Telegram notification with chunked messages for large job lists.

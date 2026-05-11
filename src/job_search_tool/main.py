@@ -421,7 +421,7 @@ def _cmd_once() -> int:
 
 def _cmd_dashboard() -> int:
     """Replace the current process with Streamlit serving the dashboard."""
-    dashboard_py = Path(__file__).parent / "job_search_tool.dashboard.py"
+    dashboard_py = Path(__file__).parent / "dashboard.py"
     args = [
         "streamlit",
         "run",

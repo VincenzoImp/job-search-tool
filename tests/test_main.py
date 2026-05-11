@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -387,7 +388,9 @@ class TestMain:
         assert cmd == "streamlit"
         assert args[0] == "streamlit"
         assert args[1] == "run"
-        assert args[2].endswith("job_search_tool.dashboard.py")
+        dashboard_path = Path(args[2])
+        assert dashboard_path.name == "dashboard.py"
+        assert dashboard_path.is_file()
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -68,9 +68,14 @@ docker compose --profile api --profile mcp up -d
 Release tags are published by GitHub Actions to Docker Hub when `v*` tags are
 pushed.
 
-## Command Compatibility
+## Commands
 
-Current Compose files use installed entrypoints such as `job-search` and
-`job-search-mcp`. The image also keeps thin root-level wrappers so older Compose
-overrides that still call `python main.py`, `python api_server.py`,
-`python mcp_server.py`, or `python healthcheck.py` continue to work.
+Runtime services use installed package entrypoints:
+
+```text
+job-search scheduler
+job-search dashboard
+job-search-api
+job-search-mcp
+job-search-healthcheck
+```

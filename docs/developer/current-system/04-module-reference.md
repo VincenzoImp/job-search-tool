@@ -45,7 +45,6 @@ This reference maps the repository to responsibilities and important contracts.
 |---|---|
 | `Dockerfile` | Builds one runtime image for scheduler, dashboard, API, and MCP roles |
 | `docker/entrypoint.sh` | Validates `/data/config/settings.yaml` and creates required directories |
-| `docker/compat/` | Thin image-only wrappers for previous Docker commands such as `python main.py` |
 | `docker-compose.yml` | Default deployment topology with scheduler and dashboard, opt-in API/MCP |
 | `.github/workflows/ci.yml` | Quality, test, security, and Docker verification pipeline |
 | `config/settings.example.yaml` | Exhaustive reference template, documentation artifact rather than runtime default |
@@ -59,7 +58,7 @@ The test suite documents important behavior beyond docstrings.
 
 | Test file | What it really specifies |
 |---|---|
-| `tests/test_config.py` | validation rules, path invariants, legacy-key handling |
+| `tests/test_config.py` | validation rules, path invariants, unsupported-key rejection |
 | `tests/test_search_jobs.py` | throttling, retry, search task semantics, dedupe expectations |
 | `tests/test_database.py` | blacklist semantics, score monotonicity, retention protection, batch behavior |
 | `tests/test_main.py` | boot ordering, save/notify interplay, notification eligibility |

@@ -35,13 +35,12 @@ def test_runtime_services_use_installed_entrypoints():
     assert services["mcp"]["command"] == ["job-search-mcp"]
 
 
-def test_docker_image_keeps_previous_command_wrappers():
-    """Old compose overrides like `python main.py` should keep working."""
+def test_docker_image_does_not_ship_legacy_command_wrappers():
+    """The image should expose package entrypoints without root-level shims."""
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
-    assert "COPY --chown=appuser:appuser docker/compat/ /app/" in dockerfile
-    for name in ("main.py", "api_server.py", "mcp_server.py", "healthcheck.py"):
-        assert (ROOT / "docker" / "compat" / name).is_file()
+    assert "docker/compat" not in dockerfile
+    assert not list((ROOT / "docker" / "compat").glob("*.py"))
 
 
 def test_published_ports_are_localhost_by_default():

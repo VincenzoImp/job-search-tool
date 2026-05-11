@@ -73,7 +73,6 @@ COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 COPY --from=builder --chown=appuser:appuser /app/src /app/src
 COPY --from=builder --chown=appuser:appuser /opt/job-search-tool/defaults/settings.example.yaml /opt/job-search-tool/defaults/settings.example.yaml
 COPY --from=builder /usr/local/bin/job-search-entrypoint /usr/local/bin/job-search-entrypoint
-COPY --chown=appuser:appuser docker/compat/ /app/
 
 RUN chmod +x /usr/local/bin/job-search-entrypoint
 

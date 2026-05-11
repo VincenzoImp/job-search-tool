@@ -158,6 +158,30 @@ jobs:
           docker compose --profile api --profile mcp config
           docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile api --profile mcp config
 
+      - name: Smoke dashboard container
+        run: |
+          docker rm -f job-search-dashboard-smoke || true
+          docker run --rm -d \
+            --name job-search-dashboard-smoke \
+            -p 18501:8501 \
+            -v "$PWD/config/settings.example.yaml:/data/config/settings.yaml:ro" \
+            job-search-tool:test job-search dashboard
+          trap 'docker rm -f job-search-dashboard-smoke' EXIT
+          python - <<'PY'
+          import socket
+          import time
+
+          deadline = time.time() + 30
+          while True:
+              try:
+                  with socket.create_connection(("127.0.0.1", 18501), timeout=2):
+                      raise SystemExit(0)
+              except OSError:
+                  if time.time() >= deadline:
+                      raise
+                  time.sleep(1)
+          PY
+
       - name: Smoke REST API container
         run: |
           docker rm -f job-search-api-smoke || true

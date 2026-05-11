@@ -47,13 +47,16 @@ Current template defaults include `search.hours_old: 720`,
 | `JOB_SEARCH_API_TOKEN` | optional Bearer token for API operations |
 | `JOB_SEARCH_MCP_BIND` | MCP bind host in Compose |
 | `JOB_SEARCH_MCP_PORT` | MCP host port |
-| `JOB_SEARCH_MCP_TRANSPORT` | `dual`, `streamable-http`, or `sse` |
 
 ## Thresholds
 
 `scoring.save_threshold` decides what is stored. `scoring.notify_threshold`
 decides what is sent to notifications. The loader rejects configurations where
 `notify_threshold < save_threshold`.
+
+Unsupported configuration keys are rejected at startup. This keeps stale
+settings visible instead of silently accepting options that no longer affect the
+runtime.
 
 ## Storage Layout
 

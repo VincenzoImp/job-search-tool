@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [7.1.3] - 2026-05-11
+## [8.0.0] - 2026-05-11
+
+### Breaking Changes
+
+- Docker images no longer ship root-level command wrappers for `python main.py`,
+  `python api_server.py`, `python mcp_server.py`, or `python healthcheck.py`.
+  Use the installed entrypoints: `job-search`, `job-search-api`,
+  `job-search-mcp`, and `job-search-healthcheck`.
+- MCP now exposes streamable HTTP only at `/mcp`. The SSE and dual-transport
+  compatibility modes, plus `JOB_SEARCH_MCP_TRANSPORT`, have been removed.
+- Unsupported settings keys now fail startup instead of being accepted or
+  ignored. Remove old keys such as `scheduler.enabled`, `scoring.threshold`,
+  `database.cleanup_enabled`, `database.cleanup_days`,
+  `vector_search.model_name`, and `vector_search.persist_dir`.
 
 ### Added
 
@@ -23,11 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **MCP server transport**: default runtime now exposes streamable HTTP at
-  `/mcp` and legacy SSE at `/sse` on port 3001. This keeps existing SSE clients
-  working while making modern streamable HTTP MCP hosts compatible. Set
-  `JOB_SEARCH_MCP_TRANSPORT=streamable-http` or `JOB_SEARCH_MCP_TRANSPORT=sse`
-  to expose only one transport.
+- **MCP server transport**: runtime exposes streamable HTTP at `/mcp` on port
+  3001.
+- Configuration parsing is now strict and rejects unsupported keys to prevent
+  stale settings drift.
 - Docker Compose now binds dashboard, API, and MCP to `127.0.0.1` by default,
   with explicit `*_BIND=0.0.0.0` LAN opt-in.
 - MCP Docker service now mounts the same `settings.yaml` as the scheduler,
@@ -37,9 +49,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Runtime modules moved from the historical `scripts/` layout into the
   installable `src/job_search_tool` package.
 - Docker and CI now execute installed entrypoints instead of source-file paths.
-- Docker image keeps root-level compatibility wrappers for previous Compose
-  overrides such as `python main.py`, `python api_server.py`, and
-  `python mcp_server.py`.
 - README is now a concise landing page instead of duplicated developer
   reference material.
 
@@ -50,6 +59,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SQLite persistent connection access is serialized with a re-entrant lock for
   normal multi-surface local usage.
 - Development Compose override now covers scheduler, dashboard, API, and MCP.
+- `job-search dashboard` now execs the packaged `dashboard.py` file instead of
+  a non-existent `job_search_tool.dashboard.py` path.
 
 ### Removed
 
@@ -59,6 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `requirements.txt` and `requirements-dev.txt`; `pyproject.toml` plus
   `uv.lock` are the dependency source of truth.
 - The package-refactor roadmap, because the refactor is part of this release.
+- Docker image compatibility wrappers under `docker/compat/`.
+- MCP SSE/dual transport runtime code and environment configuration.
+- Legacy config warning/cache code for settings keys that no longer exist.
 
 ## [7.1.2] - 2026-04-16
 
@@ -485,8 +499,8 @@ No functional or Docker-image changes — the v5.0.0 and v5.0.1 images are byte-
 
 Entries prior to v4.3.1 have been archived. The git history on `main` plus the tagged commits are the authoritative source for anything older.
 
-[Unreleased]: https://github.com/VincenzoImp/job-search-tool/compare/v7.1.3...HEAD
-[7.1.3]: https://github.com/VincenzoImp/job-search-tool/compare/v7.1.2...v7.1.3
+[Unreleased]: https://github.com/VincenzoImp/job-search-tool/compare/v8.0.0...HEAD
+[8.0.0]: https://github.com/VincenzoImp/job-search-tool/compare/v7.1.2...v8.0.0
 [7.1.2]: https://github.com/VincenzoImp/job-search-tool/compare/v7.1.1...v7.1.2
 [7.1.1]: https://github.com/VincenzoImp/job-search-tool/compare/v7.1.0...v7.1.1
 [7.1.0]: https://github.com/VincenzoImp/job-search-tool/compare/v7.0.1...v7.1.0

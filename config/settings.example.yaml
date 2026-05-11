@@ -1139,7 +1139,7 @@ profile:
 #   job-search scheduler   → continuous loop, uses the settings below
 #   job-search once        → single iteration, settings below are ignored
 #
-# The `scheduler.enabled` flag from v5 and older is no longer read.
+# Unsupported keys are rejected at startup so configuration drift is visible.
 # =============================================================================
 
 scheduler:

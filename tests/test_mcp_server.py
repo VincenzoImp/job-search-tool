@@ -318,44 +318,11 @@ def test_get_settings_documentation():
 # ---------------------------------------------------------------------------
 
 
-def test_mcp_transport_defaults_to_dual(monkeypatch):
-    from job_search_tool.mcp_server import get_mcp_transport
-
-    monkeypatch.delenv("JOB_SEARCH_MCP_TRANSPORT", raising=False)
-
-    assert get_mcp_transport() == "dual"
-
-
-def test_mcp_transport_accepts_streamable_http_alias(monkeypatch):
-    from job_search_tool.mcp_server import get_mcp_transport
-
-    monkeypatch.setenv("JOB_SEARCH_MCP_TRANSPORT", "streamable_http")
-
-    assert get_mcp_transport() == "streamable-http"
-
-
-def test_mcp_transport_accepts_legacy_sse_override(monkeypatch):
-    from job_search_tool.mcp_server import get_mcp_transport
-
-    monkeypatch.setenv("JOB_SEARCH_MCP_TRANSPORT", "sse")
-
-    assert get_mcp_transport() == "sse"
-
-
-def test_mcp_transport_rejects_unknown_values(monkeypatch):
-    from job_search_tool.mcp_server import get_mcp_transport
-
-    monkeypatch.setenv("JOB_SEARCH_MCP_TRANSPORT", "websocket")
-
-    with pytest.raises(ValueError, match="JOB_SEARCH_MCP_TRANSPORT"):
-        get_mcp_transport()
-
-
-def test_run_mcp_server_uses_resolved_transport(monkeypatch):
+def test_run_mcp_server_uses_streamable_http_only(monkeypatch):
     from job_search_tool import mcp_server
 
     transports: list[str] = []
-    monkeypatch.setenv("JOB_SEARCH_MCP_TRANSPORT", "streamable_http")
+    monkeypatch.setenv("JOB_SEARCH_MCP_TRANSPORT", "sse")
     monkeypatch.setattr(
         mcp_server.server,
         "run",
@@ -367,26 +334,9 @@ def test_run_mcp_server_uses_resolved_transport(monkeypatch):
     assert transports == ["streamable-http"]
 
 
-def test_run_mcp_server_uses_dual_transport_by_default(monkeypatch):
+def test_mcp_server_does_not_export_sse_compat_helpers():
     from job_search_tool import mcp_server
 
-    transports: list[str] = []
-    monkeypatch.delenv("JOB_SEARCH_MCP_TRANSPORT", raising=False)
-    monkeypatch.setattr(
-        mcp_server, "run_dual_mcp_server", lambda: transports.append("dual")
-    )
-
-    mcp_server.run_mcp_server()
-
-    assert transports == ["dual"]
-
-
-def test_dual_mcp_app_exposes_streamable_http_and_sse_routes():
-    from starlette.routing import Mount, Route
-
-    from job_search_tool.mcp_server import create_dual_mcp_app
-
-    app = create_dual_mcp_app()
-    paths = {route.path for route in app.routes if isinstance(route, Route | Mount)}
-
-    assert {"/mcp", "/sse", "/messages"}.issubset(paths)
+    assert not hasattr(mcp_server, "get_mcp_transport")
+    assert not hasattr(mcp_server, "create_dual_mcp_app")
+    assert not hasattr(mcp_server, "run_dual_mcp_server")
