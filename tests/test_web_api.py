@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from job_search_tool.database import JobDatabase
 from job_search_tool.models import Job
+
+
+PROJECT_ROOT = Path(__file__).parent.parent
 
 
 @pytest.fixture()
@@ -74,6 +78,30 @@ def client(db_path: Path, _seed_db: None):
 
     db.close()
     job_service.reset_singletons()
+
+
+@pytest.fixture()
+def mock_vector_store():
+    """Create a mock vector store returning canned semantic results."""
+    from job_search_tool.vector_store import SemanticSearchResult
+
+    vs = MagicMock()
+    vs.search.return_value = [
+        SemanticSearchResult(
+            job_id="abc123",
+            distance=0.15,
+            similarity=0.85,
+            metadata={
+                "title": "ML Engineer",
+                "company": "AI Corp",
+                "location": "Remote",
+                "relevance_score": 35,
+                "site": "linkedin",
+                "job_url": "https://example.com/ml",
+            },
+        )
+    ]
+    return vs
 
 
 def test_web_health(client: TestClient) -> None:
@@ -157,6 +185,47 @@ def test_get_job_not_found(client: TestClient) -> None:
     assert response.status_code == 404
 
 
+def test_stats(client: TestClient) -> None:
+    response = client.get("/api/stats")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_jobs"] == 3
+    assert "avg_relevance_score" in data
+
+
+def test_distribution(client: TestClient) -> None:
+    response = client.get("/api/distribution", params={"bin_size": 10})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert all(len(entry) == 2 for entry in data)
+
+
+def test_semantic_search_no_vector_store(client: TestClient) -> None:
+    response = client.get("/api/jobs/search/semantic", params={"q": "python engineer"})
+
+    assert response.status_code == 503
+
+
+def test_semantic_search_with_vector_store(
+    client: TestClient,
+    mock_vector_store,
+) -> None:
+    from job_search_tool import job_service
+
+    job_service._vs = mock_vector_store
+
+    response = client.get("/api/jobs/search/semantic", params={"q": "machine learning"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["job_id"] == "abc123"
+    assert data[0]["similarity"] == 0.85
+
+
 def test_put_bookmark_is_explicit_and_idempotent(client: TestClient) -> None:
     job_id = client.get("/api/jobs").json()["items"][0]["job_id"]
 
@@ -215,3 +284,7 @@ def test_cleanup_run(client: TestClient) -> None:
         "purged_blacklist",
         "total_deleted",
     }
+
+
+def test_standalone_api_module_is_removed() -> None:
+    assert not (PROJECT_ROOT / "src/job_search_tool/api_server.py").exists()

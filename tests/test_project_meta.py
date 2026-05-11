@@ -24,7 +24,6 @@ def test_console_scripts_are_declared():
 
     assert pyproject["project"]["scripts"] == {
         "job-search": "job_search_tool.main:main",
-        "job-search-api": "job_search_tool.api_server:main",
         "job-search-web": "job_search_tool.web.app:main",
         "job-search-healthcheck": "job_search_tool.healthcheck:main",
     }

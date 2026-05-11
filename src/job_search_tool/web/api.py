@@ -15,7 +15,7 @@ from job_search_tool.application.models import (
     JobListQuery,
 )
 from job_search_tool.config import get_config
-from job_search_tool.job_service import get_db, record_to_dict
+from job_search_tool.job_service import get_db, get_vs, record_to_dict
 
 
 class JobResponse(BaseModel):
@@ -76,6 +76,26 @@ class CleanupResponse(BaseModel):
     protected_bookmarked: int
     protected_applied: int
     total_deleted: int
+
+
+class StatsResponse(BaseModel):
+    total_jobs: int
+    seen_today: int
+    new_today: int
+    applied: int
+    blacklisted: int
+    avg_relevance_score: float
+
+
+class SemanticResultResponse(BaseModel):
+    job_id: str
+    title: str | None = None
+    company: str | None = None
+    location: str | None = None
+    similarity: float
+    relevance_score: int | None = None
+    site: str | None = None
+    job_url: str | None = None
 
 
 def require_api_token(authorization: str | None = Header(default=None)) -> None:
@@ -148,6 +168,43 @@ def get_job(job_id: str) -> JobResponse:
     if record is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return JobResponse(**record_to_dict(record))
+
+
+@router.get("/jobs/search/semantic", response_model=list[SemanticResultResponse])
+def search_semantic(
+    q: str = Query(..., min_length=1),
+    n_results: int = Query(20, ge=1, le=200),
+    min_score: int | None = None,
+    site: str | None = None,
+) -> list[SemanticResultResponse]:
+    vs = get_vs()
+    if vs is None:
+        raise HTTPException(status_code=503, detail="Vector store not available")
+
+    results = vs.search(query=q, n_results=n_results, min_score=min_score, site=site)
+    return [
+        SemanticResultResponse(
+            job_id=result.job_id,
+            title=result.metadata.get("title"),
+            company=result.metadata.get("company"),
+            location=result.metadata.get("location"),
+            similarity=round(result.similarity, 4),
+            relevance_score=result.metadata.get("relevance_score"),
+            site=result.metadata.get("site"),
+            job_url=result.metadata.get("job_url"),
+        )
+        for result in results
+    ]
+
+
+@router.get("/stats", response_model=StatsResponse)
+def get_stats() -> StatsResponse:
+    return StatsResponse(**get_db().get_statistics())
+
+
+@router.get("/distribution")
+def get_distribution(bin_size: int = Query(5, ge=1, le=100)) -> list[list[int]]:
+    return [list(pair) for pair in get_db().get_score_distribution(bin_size)]
 
 
 @router.put("/jobs/{job_id}/bookmark", response_model=JobCommandResponse)
