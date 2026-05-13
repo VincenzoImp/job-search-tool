@@ -100,7 +100,7 @@ beforeEach(() => {
   vi.mocked(setBookmarked).mockResolvedValue({
     success: true,
     affected_count: 1,
-    job_id: "job-1",
+    job_ids: ["job-1"],
     bookmarked: true,
     applied: null,
     message: null
@@ -108,7 +108,7 @@ beforeEach(() => {
   vi.mocked(setApplied).mockResolvedValue({
     success: true,
     affected_count: 1,
-    job_id: "job-1",
+    job_ids: ["job-1"],
     bookmarked: null,
     applied: true,
     message: null
@@ -116,7 +116,7 @@ beforeEach(() => {
   vi.mocked(blacklistJobs).mockResolvedValue({
     success: true,
     affected_count: 1,
-    job_id: null,
+    job_ids: ["job-1"],
     bookmarked: null,
     applied: null,
     message: null
