@@ -350,7 +350,15 @@ def search_semantic(
 
 @router.get("/stats", response_model=StatsResponse)
 def get_stats() -> StatsResponse:
-    return StatsResponse(**_service().get_statistics())
+    stats = _service().get_statistics()
+    return StatsResponse(
+        total_jobs=int(stats["total_jobs"]),
+        seen_today=int(stats["seen_today"]),
+        new_today=int(stats["new_today"]),
+        applied=int(stats["applied"]),
+        blacklisted=int(stats["blacklisted"]),
+        avg_relevance_score=float(stats["avg_relevance_score"]),
+    )
 
 
 @router.get("/distribution")

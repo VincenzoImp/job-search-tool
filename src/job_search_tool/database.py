@@ -938,7 +938,7 @@ class JobDatabase:
                 ORDER BY count DESC, is_remote ASC
                 """
             )
-            remote = [
+            remote: list[dict[str, object]] = [
                 {"value": bool(row["value"]), "count": int(row["count"])}
                 for row in cursor.fetchall()
             ]
@@ -1325,7 +1325,7 @@ class JobDatabase:
             if job_id in records_by_id
         ]
 
-    def get_statistics(self) -> dict[str, int]:
+    def get_statistics(self) -> dict[str, int | float]:
         """
         Get database statistics.
 
