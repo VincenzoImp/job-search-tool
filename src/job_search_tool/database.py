@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from job_search_tool.config import Config
 
 from job_search_tool.logger import get_logger
-from job_search_tool.models import Job, JobDBRecord, generate_job_id
+from job_search_tool.models import BlacklistedJobRecord, Job, JobDBRecord, generate_job_id
 from job_search_tool.scoring import calculate_relevance_score
 
 _JOB_FIELD_NAMES = (
@@ -71,17 +71,6 @@ class ReconciliationReport:
     @property
     def total_deleted(self) -> int:
         return self.deleted_below_score + self.deleted_stale + self.purged_blacklist
-
-
-@dataclass(frozen=True)
-class BlacklistedJobRecord:
-    """Database record for a job hidden from future search imports."""
-
-    job_id: str
-    title: str
-    company: str
-    location: str
-    blacklisted_at: str
 
 
 class JobDatabase:
