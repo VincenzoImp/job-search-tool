@@ -21,7 +21,12 @@ if TYPE_CHECKING:
     from job_search_tool.config import Config
 
 from job_search_tool.logger import get_logger
-from job_search_tool.models import BlacklistedJobRecord, Job, JobDBRecord, generate_job_id
+from job_search_tool.models import (
+    BlacklistedJobRecord,
+    Job,
+    JobDBRecord,
+    generate_job_id,
+)
 from job_search_tool.scoring import calculate_relevance_score
 
 _JOB_FIELD_NAMES = (
